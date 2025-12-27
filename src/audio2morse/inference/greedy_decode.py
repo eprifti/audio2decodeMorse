@@ -164,6 +164,7 @@ def main():
     parser.add_argument("--audio", type=str, required=True, help="Path to WAV file to decode.")
     parser.add_argument("--beam-size", type=int, default=1, help="Beam size >1 enables CTC beam search.")
     parser.add_argument("--device", type=str, choices=["cpu", "cuda", "mps"], default=None, help="Force device.")
+    parser.add_argument("--verbose", action="store_true", help="Print extra debug info.")
     args = parser.parse_args()
 
     if args.device:
@@ -181,14 +182,21 @@ def main():
 
         print(f"Decoding audio: {args.audio}")
         mel = load_audio(Path(args.audio), cfg).unsqueeze(0).to(device)
+        if args.verbose:
+            print(f"Features shape (batch,time,mel): {mel.shape}")
         with torch.no_grad():
             log_probs = model(mel)
+        if args.verbose:
+            print(f"Log-probs shape (time,batch,vocab): {log_probs.shape}")
         idx_to_char = index_to_char(alphabet)
         if args.beam_size > 1:
             text = ctc_beam_search(log_probs, idx_to_char, beam_size=args.beam_size)
         else:
             text = greedy_decode(log_probs, idx_to_char)
-        print(text)
+        if text:
+            print(text)
+        else:
+            print("(decoded empty string)")
     except Exception as e:
         import traceback
 
