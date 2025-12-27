@@ -157,6 +157,17 @@ def main():
         lr=cfg["training"]["learning_rate"],
         weight_decay=cfg["training"]["weight_decay"],
     )
+    sched_cfg = cfg["training"].get("lr_scheduler")
+    scheduler = None
+    if sched_cfg and sched_cfg.get("type") == "reduce_on_plateau":
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=sched_cfg.get("factor", 0.5),
+            patience=sched_cfg.get("patience", 2),
+            min_lr=sched_cfg.get("min_lr", 1e-5),
+            verbose=True,
+        )
 
     os.makedirs(cfg["training"]["checkpoint_dir"], exist_ok=True)
     best_val = float("inf")
@@ -186,6 +197,8 @@ def main():
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device, downsample_factor)
         val_loss = validate(model, val_loader, criterion, device, downsample_factor)
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+        if scheduler:
+            scheduler.step(val_loss)
         epoch_history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
         ckpt_path = Path(cfg["training"]["checkpoint_dir"]) / f"epoch_{epoch}.pt"

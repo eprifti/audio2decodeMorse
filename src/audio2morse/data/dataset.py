@@ -58,6 +58,11 @@ class MorseAudioDataset(Dataset):
         aug_cfg = augment or {}
         spec_cfg = aug_cfg.get("specaugment", {})
         self.use_specaugment = spec_cfg.get("enabled", False)
+        wav_cfg = aug_cfg.get("waveform", {})
+        self.use_waveform_aug = wav_cfg.get("enabled", False)
+        self.noise_std = float(wav_cfg.get("noise_std", 0.0))
+        self.gain_min = float(wav_cfg.get("gain_min", 1.0))
+        self.gain_max = float(wav_cfg.get("gain_max", 1.0))
 
         self.mel = torchaudio.transforms.MelSpectrogram(
             sample_rate=sample_rate,
@@ -93,6 +98,15 @@ class MorseAudioDataset(Dataset):
             waveform = torchaudio.functional.resample(waveform, sr, self.sample_rate)
         max_samples = int(self.max_duration_s * self.sample_rate)
         waveform = waveform[:, :max_samples]
+
+        # Lightweight waveform augmentation: random gain and additive noise.
+        if self.use_waveform_aug:
+            if self.gain_min != 1.0 or self.gain_max != 1.0:
+                gain = torch.empty(1).uniform_(self.gain_min, self.gain_max).item()
+                waveform = waveform * gain
+            if self.noise_std > 0:
+                noise = torch.randn_like(waveform) * self.noise_std
+                waveform = waveform + noise
 
         with torch.no_grad():
             spec = self.to_db(self.mel(waveform)).squeeze(0)  # (mel, time)

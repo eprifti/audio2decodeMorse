@@ -2,7 +2,9 @@ input: data/texts.txt
 out_dir: data/audio
 manifest: data/manifests/train.jsonl
 test_manifest: data/manifests/test.jsonl
+val_manifest: data/manifests/val.jsonl
 train_ratio: 0.8
+val_ratio: 0.1
 sample_rate: 16000
 num_samples: 10000
 wpm_min: 15

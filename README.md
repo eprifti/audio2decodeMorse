@@ -84,7 +84,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
     --config config/generation.yaml
   ```
-  By default this reads `data/texts.txt`, which now contains a diverse set of phrases, punctuation, numbers, and operating phrases to cover the full alphabet.
+  By default this reads `data/texts.txt`, which now contains a diverse set of phrases, punctuation, numbers, and operating phrases to cover the full alphabet, and splits into train/val/test manifests.
   You can still override any field on the CLI (e.g., `--num-samples 2000`); required args are satisfied by the config.
 
 ## Training
@@ -95,6 +95,8 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```
 - Checkpoints are saved in `outputs/` by default (configurable).
 - Default training uses SpecAugment (time/frequency masking) to improve robustness; adjust/disable in `data.augment.specaugment`.
+- Additional waveform augments (random gain, light noise) are enabled by default in `data.augment.waveform`.
+- Learning-rate schedule: ReduceLROnPlateau on validation loss is enabled (see `training.lr_scheduler`); weight decay set to 1e-4; slightly smaller/lower-dropout RNN to reduce overfitting.
 
 ## Inference
 - After training, decode an audio file with greedy decoding:

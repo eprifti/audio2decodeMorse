@@ -120,7 +120,9 @@ def main():
     parser.add_argument("--out-dir", required=False, help="Directory to write WAV files.")
     parser.add_argument("--manifest", required=False, help="Path to train JSONL manifest to write.")
     parser.add_argument("--test-manifest", help="Optional path to test JSONL manifest; auto-created if train_ratio<1.")
+    parser.add_argument("--val-manifest", help="Optional path to validation JSONL manifest.")
     parser.add_argument("--train-ratio", type=float, default=0.9, help="Fraction of samples to assign to train.")
+    parser.add_argument("--val-ratio", type=float, default=0.0, help="Fraction of samples to assign to validation.")
     parser.add_argument("--sample-rate", type=int, default=16000, help="Sample rate for output WAVs.")
     parser.add_argument("--num-samples", type=int, default=None, help="Total samples to generate (sampled with replacement). Defaults to one per input line.")
     parser.add_argument("--wpm", type=float, default=None, help="Fixed words per minute speed (overrides min/max).")
@@ -163,9 +165,15 @@ def main():
     train_manifest_path = Path(args.manifest)
     train_manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
+    val_manifest_path = Path(args.val_manifest) if args.val_manifest else None
     test_manifest_path = Path(args.test_manifest) if args.test_manifest else None
-    if test_manifest_path is None and args.train_ratio < 1.0:
+    if test_manifest_path is None and args.train_ratio < 1.0 and (args.val_ratio or val_manifest_path):
+        # If val is specified and train_ratio < 1, use remainder for test only if path provided.
+        test_manifest_path = None
+    if test_manifest_path is None and args.train_ratio < 1.0 and val_manifest_path is None:
         test_manifest_path = train_manifest_path.parent / "test.jsonl"
+    if val_manifest_path:
+        val_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     if test_manifest_path:
         test_manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -223,13 +231,22 @@ def main():
 
     # Shuffle and split
     perm = rng.permutation(len(entries))
-    split_idx = int(len(entries) * args.train_ratio) if test_manifest_path else len(entries)
-    train_entries = [entries[i] for i in perm[:split_idx]]
-    test_entries = [entries[i] for i in perm[split_idx:]] if test_manifest_path else []
+    n = len(entries)
+    if args.train_ratio + args.val_ratio > 1.0:
+        raise ValueError("train_ratio + val_ratio must be <= 1.0")
+    train_end = int(n * args.train_ratio) if (val_manifest_path or test_manifest_path) else n
+    val_end = train_end + int(n * args.val_ratio) if val_manifest_path else train_end
+    train_entries = [entries[i] for i in perm[:train_end]]
+    val_entries = [entries[i] for i in perm[train_end:val_end]] if val_manifest_path else []
+    test_entries = [entries[i] for i in perm[val_end:]] if test_manifest_path else []
 
     with train_manifest_path.open("w") as mfp:
         for entry in train_entries:
             mfp.write(json.dumps(entry) + "\n")
+    if val_manifest_path and val_entries:
+        with val_manifest_path.open("w") as vfp:
+            for entry in val_entries:
+                vfp.write(json.dumps(entry) + "\n")
     if test_manifest_path and test_entries:
         with test_manifest_path.open("w") as tfp:
             for entry in test_entries:
@@ -238,6 +255,8 @@ def main():
     total_sec = time.perf_counter() - total_start
     avg_ms = (total_sec / len(entries)) * 1000 if entries else 0
     print(f"Done. Train manifest: {train_manifest_path} ({len(train_entries)} entries)")
+    if val_manifest_path:
+        print(f"Val manifest: {val_manifest_path} ({len(val_entries)} entries)")
     if test_manifest_path:
         print(f"Test manifest: {test_manifest_path} ({len(test_entries)} entries)")
     print(f"Total generation time: {total_sec:.2f}s | Avg per sample: {avg_ms:.1f}ms")
