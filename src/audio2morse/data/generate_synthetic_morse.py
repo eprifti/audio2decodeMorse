@@ -140,6 +140,10 @@ def main():
     parser.add_argument("--target-samples", type=int, default=0, help="How many extra messages to synthesize from target chars.")
     parser.add_argument("--target-min-len", type=int, default=3, help="Minimum length of generated target messages.")
     parser.add_argument("--target-max-len", type=int, default=8, help="Maximum length of generated target messages.")
+    parser.add_argument("--target-words-file", type=str, default=None, help="Optional file with one word per line to sample phrases.")
+    parser.add_argument("--target-words-samples", type=int, default=0, help="Extra phrases built from random words (space-separated).")
+    parser.add_argument("--target-words-min", type=int, default=2, help="Min words per synthetic phrase.")
+    parser.add_argument("--target-words-max", type=int, default=5, help="Max words per synthetic phrase.")
     args = parser.parse_args()
 
     # Optionally override defaults with a YAML config.
@@ -181,6 +185,17 @@ def main():
 
     with open(args.input, "r") as f:
         messages = [line.strip() for line in f if line.strip()]
+
+    # Optional: append synthetic phrases to over-emphasize spaces/word structure.
+    if args.target_words_file and args.target_words_samples > 0:
+        with open(args.target_words_file, "r") as wf:
+            words = [w.strip().upper() for w in wf if w.strip()]
+        if not words:
+            raise ValueError("No words found in target_words_file.")
+        for _ in range(args.target_words_samples):
+            length = int(rng.integers(args.target_words_min, args.target_words_max + 1))
+            phrase_words = rng.choice(words, size=length, replace=True).tolist()
+            messages.append(" ".join(phrase_words))
 
     if args.target_chars and args.target_samples > 0:
         chars = [c for c in args.target_chars.upper() if c.strip()]

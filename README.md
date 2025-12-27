@@ -86,6 +86,15 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```
   By default this reads `data/texts.txt`, which now contains a diverse set of phrases, punctuation, numbers, and operating phrases to cover the full alphabet, and splits into train/val/test manifests.
   You can still override any field on the CLI (e.g., `--num-samples 2000`); required args are satisfied by the config.
+  To emphasize spaces/word structure further, you can inject random phrases from a word list:
+  ```bash
+  PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
+    --config config/generation.yaml \
+    --target-words-file data/texts.txt \
+    --target-words-samples 500 \
+    --target-words-min 2 \
+    --target-words-max 6
+  ```
 
 ## Training
 - Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.
