@@ -15,6 +15,7 @@ Example:
 """
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Dict, List
 
@@ -23,6 +24,7 @@ import soundfile as sf
 import torch
 import torchaudio
 import yaml
+from tqdm import tqdm
 
 from audio2morse.data.vocab import build_vocab, index_to_char
 from audio2morse.models.ctc_model import CTCMorseModel
@@ -90,6 +92,44 @@ def greedy_decode(log_probs: torch.Tensor, idx_to_char: List[str]) -> str:
     return "".join(decoded)
 
 
+def levenshtein_ops(ref: str, hyp: str):
+    n, m = len(ref), len(hyp)
+    dp = [[(0, None) for _ in range(m + 1)] for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        dp[i][0] = (i, "del")
+    for j in range(1, m + 1):
+        dp[0][j] = (j, "ins")
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost_sub = dp[i - 1][j - 1][0] + (ref[i - 1] != hyp[j - 1])
+            cost_del = dp[i - 1][j][0] + 1
+            cost_ins = dp[i][j - 1][0] + 1
+            best = min(cost_sub, cost_del, cost_ins)
+            if best == cost_sub:
+                op = "match" if ref[i - 1] == hyp[j - 1] else "sub"
+            elif best == cost_del:
+                op = "del"
+            else:
+                op = "ins"
+            dp[i][j] = (best, op)
+    ops = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        _, op = dp[i][j]
+        if op in ("match", "sub"):
+            ops.append((op, ref[i - 1], hyp[j - 1]))
+            i -= 1
+            j -= 1
+        elif op == "del":
+            ops.append((op, ref[i - 1], ""))
+            i -= 1
+        elif op == "ins":
+            ops.append((op, "", hyp[j - 1]))
+            j -= 1
+    ops.reverse()
+    return ops
+
+
 def text_to_targets(text: str, label_map: Dict[str, int], blank_idx: int) -> torch.Tensor:
     return torch.tensor([label_map.get(c, blank_idx) for c in text], dtype=torch.long)
 
@@ -104,6 +144,7 @@ def main():
     parser.add_argument("--run-dir", default=None, help="Optional run directory (e.g., outputs/run1); if set, outputs are written there.")
     parser.add_argument("--out-parquet", default=None, help="Output Parquet path.")
     parser.add_argument("--out-csv", default=None, help="Output CSV path.")
+    parser.add_argument("--per-char-out", default=None, help="Optional path to write per-character error stats CSV.")
     args = parser.parse_args()
 
     device = get_device()
@@ -125,46 +166,90 @@ def main():
     }
 
     rows = []
+    # Prepare per-character stats if requested.
+    do_char_stats = args.per_char_out is not None or args.run_dir is not None
+    char_stats = None
+    if do_char_stats:
+        char_stats = {c: {"count": 0, "correct": 0, "subs": 0, "dels": 0} for c in alphabet}
+
+    total_start = time.time()
     with torch.no_grad():
         for part, path in parts.items():
             if not path.exists():
                 raise FileNotFoundError(f"Manifest not found: {path}")
             with path.open("r") as fp:
-                for line in fp:
-                    if not line.strip():
-                        continue
-                    entry = json.loads(line)
-                    audio_path = Path(entry["audio_filepath"])
-                    text = entry["text"]
+                lines = [ln for ln in fp if ln.strip()]
+            for line in tqdm(lines, desc=f"{part}", leave=False):
+                entry = json.loads(line)
+                audio_path = Path(entry["audio_filepath"])
+                text = entry["text"]
 
-                    mel = load_audio(audio_path, cfg).unsqueeze(0).to(device)  # (1,T,F)
-                    log_probs = model(mel)  # (T,B,V)
-                    input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
-                    targets = text_to_targets(text, label_map, blank_idx).to(device)
-                    target_lengths = torch.tensor([targets.numel()], dtype=torch.long, device=device)
+                mel = load_audio(audio_path, cfg).unsqueeze(0).to(device)  # (1,T,F)
+                log_probs = model(mel)  # (T,B,V)
+                input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
+                targets = text_to_targets(text, label_map, blank_idx).to(device)
+                target_lengths = torch.tensor([targets.numel()], dtype=torch.long, device=device)
 
-                    loss_val = criterion(log_probs, targets, input_lengths, target_lengths)[0].item()
-                    hyp = greedy_decode(log_probs, idx_to_char)
+                loss_val = criterion(log_probs, targets, input_lengths, target_lengths)[0].item()
+                hyp = greedy_decode(log_probs, idx_to_char)
 
-                    row = dict(entry)
-                    row["partition"] = part
-                    row["inference_text"] = hyp
-                    row["loss"] = loss_val
-                    rows.append(row)
+                if do_char_stats and char_stats is not None:
+                    for op, r, _ in levenshtein_ops(text, hyp):
+                        if r not in char_stats:
+                            continue
+                        char_stats[r]["count"] += 1
+                        if op == "match":
+                            char_stats[r]["correct"] += 1
+                        elif op == "sub":
+                            char_stats[r]["subs"] += 1
+                        elif op == "del":
+                            char_stats[r]["dels"] += 1
+
+                row = dict(entry)
+                row["partition"] = part
+                row["inference_text"] = hyp
+                row["loss"] = loss_val
+                rows.append(row)
 
     df = pd.DataFrame(rows)
     if args.run_dir:
         base = Path(args.run_dir)
         out_parquet = base / "combined_with_preds.parquet"
         out_csv = base / "combined_with_preds.csv"
+        per_char_out = Path(args.per_char_out) if args.per_char_out else base / "per_char_errors.csv"
     else:
         out_parquet = Path(args.out_parquet or "analyses/combined_with_preds.parquet")
         out_csv = Path(args.out_csv or "analyses/combined_with_preds.csv")
+        per_char_out = Path(args.per_char_out) if args.per_char_out else None
 
     out_parquet.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_parquet, index=False)
     df.to_csv(out_csv, index=False)
+
+    if do_char_stats and per_char_out is not None and char_stats is not None:
+        rows_char = []
+        for ch, s in char_stats.items():
+            total = s["count"]
+            err = total - s["correct"]
+            rows_char.append(
+                {
+                    "char": ch,
+                    "count": total,
+                    "correct": s["correct"],
+                    "subs": s["subs"],
+                    "dels": s["dels"],
+                    "error_rate": err / total if total > 0 else 0.0,
+                    "accuracy": s["correct"] / total if total > 0 else 0.0,
+                }
+            )
+        per_char_df = pd.DataFrame(rows_char).sort_values("error_rate", ascending=False)
+        per_char_out.parent.mkdir(parents=True, exist_ok=True)
+        per_char_df.to_csv(per_char_out, index=False)
+        print(f"Wrote per-character stats to {per_char_out}")
+
+    elapsed = time.time() - total_start
     print(f"Wrote {len(df)} rows with predictions/loss to {out_parquet} and {out_csv}")
+    print(f"Total time: {elapsed/60:.2f} minutes")
 
 
 if __name__ == "__main__":
