@@ -25,7 +25,9 @@ option_list <- list(
   make_option(c("-i", "--input"), default = "analyses/combined_with_preds.csv",
               help = "Path to combined_with_preds.csv"),
   make_option(c("-o", "--out-dir"), default = "analyses/figures",
-              help = "Directory to write plots")
+              help = "Directory to write plots"),
+  make_option(c("-c", "--char-errors"), default = "analyses/per_char_errors.csv",
+              help = "Optional path to per_char_errors.csv (from per_char_errors.py) for alphabet-level plots")
 )
 opts <- parse_args(OptionParser(option_list = option_list))
 
@@ -148,5 +150,30 @@ ggsave(file.path(opts$`out-dir`, "loss_freq_wpm_heatmap.png"), p7, width = 9, he
 # Correlation matrix for continuous vars.
 cor_mat <- cor(df %>% select(log_loss, loss, freq_hz, amplitude, wpm), use = "complete.obs")
 write.csv(cor_mat, file.path(opts$`out-dir`, "correlation_matrix.csv"))
+
+# Alphabet-level error rates (if per_char_errors.csv exists).
+char_err_path <- opts$`char-errors`
+if (file.exists(char_err_path)) {
+  char_df <- read_csv(char_err_path, show_col_types = FALSE)
+  if (all(c("char", "error_rate", "count") %in% names(char_df))) {
+    char_df <- char_df %>% arrange(desc(error_rate))
+    p8 <- ggplot(char_df, aes(x = reorder(char, error_rate), y = error_rate, fill = count)) +
+      geom_col() +
+      coord_flip() +
+      scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+      labs(
+        title = "Per-character error rate",
+        x = "Character",
+        y = "Error rate",
+        fill = "Count"
+      ) +
+      theme_minimal(base_size = 12)
+    ggsave(file.path(opts$`out-dir`, "per_char_error_rates.png"), p8, width = 7, height = 6, dpi = 200)
+  } else {
+    warning("per_char_errors file missing required columns; skipping alphabet plot.")
+  }
+} else {
+  message("per_char_errors file not found (", char_err_path, "); skipping alphabet-level plot.")
+}
 
 message("Wrote plots to: ", opts$`out-dir`)
