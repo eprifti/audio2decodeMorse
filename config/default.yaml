@@ -24,14 +24,9 @@ labels:
 
 model:
   cnn_channels: [32, 64, 128]
-  # Pool only in frequency (time stride 1) for the first two blocks, light pool in time on the last.
-  pool_kernel:
-    - [1, 2]
-    - [1, 2]
-    - [2, 2]
   rnn_hidden_size: 256
   rnn_layers: 3
-  dropout: 0.3
+  dropout: 0.2
 
 training:
   batch_size: 8
@@ -43,7 +38,7 @@ training:
   log_interval: 20
   checkpoint_dir: outputs
   seed: 42
-  early_stop_patience: 3  # set to null to disable early stopping
+  early_stop_patience: null  # disabled
   lr_scheduler:
     type: reduce_on_plateau
     factor: 0.5

@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
@@ -90,7 +91,12 @@ def main():
     parser = argparse.ArgumentParser(description="Train Morse audio CTC model.")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config.")
     parser.add_argument("--resume", type=str, help="Optional path to checkpoint to resume from.")
-    parser.add_argument("--run-name", type=str, default=None, help="Optional name for this run (creates outputs/<run-name>).")
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Optional name for this run (creates outputs/<run-name>). If omitted, a timestamped name is used.",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -146,7 +152,6 @@ def main():
         input_dim=cfg["data"]["n_mels"],
         vocab_size=len(label_map),
         cnn_channels=cfg["model"]["cnn_channels"],
-        pool_kernel=cfg["model"].get("pool_kernel"),
         rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
         rnn_layers=cfg["model"]["rnn_layers"],
         dropout=cfg["model"]["dropout"],
@@ -170,15 +175,16 @@ def main():
             verbose=True,
         )
 
-    checkpoint_root = Path(cfg["training"]["checkpoint_dir"])
-    if args.run_name:
-        checkpoint_root = checkpoint_root / args.run_name
+    run_name = args.run_name or datetime.now().strftime("run-%Y%m%d-%H%M%S")
+    checkpoint_root = Path(cfg["training"]["checkpoint_dir"]) / run_name
     os.makedirs(checkpoint_root, exist_ok=True)
+    with (checkpoint_root / "config_used.yaml").open("w") as fp:
+        yaml.safe_dump(cfg, fp)
     best_val = float("inf")
-    downsample_factor = getattr(model, "time_pool_factor", 1)
+    downsample_factor = 2 ** len(cfg["model"]["cnn_channels"])  # fixed 2x2 pooling
     epoch_history = []
     start_epoch = 1
-    patience = cfg["training"].get("early_stop_patience", None)
+    patience = None  # early stopping disabled
     patience_counter = 0
 
     if args.resume:
@@ -237,10 +243,6 @@ def main():
                 fp.write("epoch,train_loss,val_loss\n")
         with metrics_path.open("a") as fp:
             fp.write(f"{epoch},{train_loss:.6f},{val_loss:.6f}\n")
-
-        if patience is not None and patience_counter >= patience:
-            print(f"Early stopping triggered (patience {patience}).")
-            break
 
     # Save loss history to CSV
     metrics_path = checkpoint_root / "loss_history.csv"
