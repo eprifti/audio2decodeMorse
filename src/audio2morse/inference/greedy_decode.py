@@ -9,7 +9,7 @@ Usage example (from repo root):
 """
 import argparse
 from pathlib import Path
-from math import logaddexp
+from math import log
 from typing import Dict, List, Tuple
 
 import soundfile as sf
@@ -83,6 +83,25 @@ def greedy_decode(log_probs: torch.Tensor, idx_to_char: List[str]) -> str:
             decoded.append(idx_to_char[idx])
         prev = idx
     return "".join(decoded)
+
+
+def logaddexp(a: float, b: float) -> float:
+    """Stable log(exp(a)+exp(b)) for Python versions without math.logaddexp."""
+    if a == -float("inf"):
+        return b
+    if b == -float("inf"):
+        return a
+    if a > b:
+        return a + log1p_exp(b - a)
+    else:
+        return b + log1p_exp(a - b)
+
+
+def log1p_exp(x: float) -> float:
+    if x > 0:
+        return x + log(1 + math.exp(-x))
+    else:
+        return log(1 + math.exp(x))
 
 
 def ctc_beam_search(log_probs: torch.Tensor, idx_to_char: List[str], beam_size: int = 5) -> str:
