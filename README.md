@@ -101,8 +101,8 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - Run training (timestamped run name by default; or pass your own):
   ```bash
   PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src python3 -m audio2morse.training.train \
-    --config config/baseline_small_cnn2_lstm128.yaml \
-    --run-name baseline_small_cnn2_lstm128
+    --config config/baseline_cnn3_bilstm256_clean.yaml \
+    --run-name baseline_cnn3_bilstm256_clean
   ```
 - If you omit `--run-name`, a timestamped name like `run-20241227-153045` is created. Checkpoints and loss curves are saved under `outputs/<run-name>/` (root is configurable in `training.checkpoint_dir`). A copy of the config is stored as `config_used.yaml` in the run folder. Early stopping is disabled by default; training runs for the configured epochs.
 - Default training uses SpecAugment (time/frequency masking) to improve robustness; adjust/disable in `data.augment.specaugment`.
@@ -113,14 +113,14 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - After training, decode an audio file with greedy decoding:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
-    --checkpoint outputs/baseline_small_cnn2_lstm128/best.pt \
+    --checkpoint outputs/baseline_cnn3_bilstm256_clean/best.pt \
     --audio data/audio/example.wav
   ```
 - The script prints the predicted text.
 - For potentially better accuracy, enable a small CTC beam search:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
-    --checkpoint outputs/baseline_small_cnn2_lstm128/best.pt \
+    --checkpoint outputs/baseline_cnn3_bilstm256_clean/best.pt \
     --audio data/audio/example.wav \
     --beam-size 5
   ```

@@ -24,6 +24,13 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
   --config config/baseline_cnn3_bilstm256.yaml \
   --run-name baseline_cnn3_bilstm256
 ```
+Cleaner variant (no aug, no weight decay, longer training):
+```bash
+PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
+  -m audio2morse.training.train \
+  --config config/baseline_cnn3_bilstm256_clean.yaml \
+  --run-name baseline_cnn3_bilstm256_clean
+```
 
 To decode with that run:
 ```bash
@@ -39,3 +46,5 @@ Alternate configs:
   Example run: `--config config/small_baseline.yaml --run-name baseline_small_cnn2_lstm128`.
 - `config/baseline_cnn3_bilstm256.yaml`: larger model (cnn_channels [32, 64, 128], rnn_hidden_size 256, rnn_layers 3, dropout 0.2, bidirectional).
   Example run: `--config config/baseline_cnn3_bilstm256.yaml --run-name baseline_cnn3_bilstm256`.
+- `config/baseline_cnn3_bilstm256_clean.yaml`: same as above but with aug disabled, weight decay 0, scheduler off, 20 epochs.
+  Example run: `--config config/baseline_cnn3_bilstm256_clean.yaml --run-name baseline_cnn3_bilstm256_clean`.
