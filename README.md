@@ -93,6 +93,13 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - `src/audio2morse/inference/` – inference helpers and CLI.
 - `src/audio2morse/data/morse_map.py` – international Morse code dot/dash lookup tables.
 
+## Model architecture
+- Front-end: log-mel spectrograms (64 bins by default) with frame length/step 25/10 ms, mono audio resampled to 16 kHz.
+- Encoder: 3 convolutional blocks (channels 32 → 64 → 128) with ReLU, dropout, and layer norm to denoise and downsample in frequency.
+- Temporal modeling: 3-layer bidirectional LSTM (hidden size 256, dropout 0.2) to capture dot/dash timing.
+- Head: linear projection to vocab logits; CTC loss with a `<BLANK>` token (see `src/audio2morse/models/ctc_model.py`).
+- Configurable in `config/default.yaml` (`model` and `data` sections). You can change channels, RNN depth/width, and dropout there.
+
 ## Notes on CTC
 - The model trains with Connectionist Temporal Classification (CTC), which handles variable-length audio → text without pre-aligned labels by using a frame-level “blank” token and collapsing repeats/blanks at decode time.
 - Greedy decoding in `inference/greedy_decode.py` simply takes the argmax per frame and collapses repeats/blanks; beam search could improve accuracy but isn’t included here for brevity.
