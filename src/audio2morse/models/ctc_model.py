@@ -10,10 +10,10 @@ class CTCMorseModel(nn.Module):
         input_dim: int,
         vocab_size: int,
         cnn_channels: List[int],
-        pool_kernel: Sequence[Sequence[int]] = None,
         rnn_hidden_size: int,
         rnn_layers: int = 2,
         dropout: float = 0.1,
+        pool_kernel: Sequence[Sequence[int]] = None,
     ) -> None:
         super().__init__()
         convs = []
