@@ -37,6 +37,9 @@ if (!all(c("partition", "loss", "freq_hz", "amplitude", "wpm") %in% names(df))) 
   stop("Input is missing required columns: partition, loss, freq_hz, amplitude, wpm")
 }
 
+# Precompute log-loss for models/plots (avoid log(0)).
+df <- df %>% mutate(log_loss = log(loss + 1e-8))
+
 # Basic summary statistics.
 summary_stats <- df %>%
   group_by(partition) %>%
@@ -103,10 +106,47 @@ p4 <- ggplot(df, aes(x = wpm, y = loss, color = partition)) +
 ggsave(file.path(opts$`out-dir`, "loss_vs_wpm.png"), p4, width = 7, height = 4, dpi = 200)
 
 # Simple linear model on log-loss.
-df <- df %>% mutate(log_loss = log(loss + 1e-8))
 lm_fit <- lm(log_loss ~ partition + freq_hz + amplitude + wpm, data = df)
 lm_summary <- capture.output(summary(lm_fit))
 writeLines(lm_summary, file.path(opts$`out-dir`, "linear_model_summary.txt"))
 message("Linear model written to: ", file.path(opts$`out-dir`, "linear_model_summary.txt"))
+
+# Loss density by partition.
+p5 <- ggplot(df, aes(x = loss, color = partition, fill = partition)) +
+  geom_density(alpha = 0.2) +
+  scale_x_log10(labels = label_number()) +
+  labs(
+    title = "Loss density by partition",
+    x = "Loss (log scale)", y = "Density", color = "Partition", fill = "Partition"
+  ) +
+  theme_minimal(base_size = 12)
+ggsave(file.path(opts$`out-dir`, "loss_density.png"), p5, width = 7, height = 4, dpi = 200)
+
+# Frequency distribution by partition.
+p6 <- ggplot(df, aes(x = freq_hz, fill = partition)) +
+  geom_histogram(position = "identity", alpha = 0.4, bins = 40) +
+  labs(
+    title = "Tone frequency distribution",
+    x = "Frequency (Hz)", y = "Count", fill = "Partition"
+  ) +
+  theme_minimal(base_size = 12)
+ggsave(file.path(opts$`out-dir`, "frequency_distribution.png"), p6, width = 7, height = 4, dpi = 200)
+
+# Mean log-loss over freq/WPM grid (faceted by partition).
+p7 <- ggplot(df, aes(x = freq_hz, y = wpm, z = log_loss)) +
+  stat_summary_2d(fun = mean, bins = 35) +
+  facet_wrap(~partition) +
+  scale_fill_viridis_c(option = "C", name = "Mean log-loss") +
+  labs(
+    title = "Mean log-loss across frequency and speed",
+    x = "Frequency (Hz)",
+    y = "Words per minute"
+  ) +
+  theme_minimal(base_size = 12)
+ggsave(file.path(opts$`out-dir`, "loss_freq_wpm_heatmap.png"), p7, width = 9, height = 5, dpi = 200)
+
+# Correlation matrix for continuous vars.
+cor_mat <- cor(df %>% select(log_loss, loss, freq_hz, amplitude, wpm), use = "complete.obs")
+write.csv(cor_mat, file.path(opts$`out-dir`, "correlation_matrix.csv"))
 
 message("Wrote plots to: ", opts$`out-dir`)
