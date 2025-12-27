@@ -8,8 +8,9 @@ Usage example (from repo root):
         --audio data/audio/example.wav
 """
 import argparse
-from pathlib import Path
+import math
 from math import log
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import soundfile as sf
