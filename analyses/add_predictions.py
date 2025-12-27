@@ -57,6 +57,7 @@ def prepare_model(cfg: Dict, alphabet: str, device: torch.device) -> CTCMorseMod
         rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
         rnn_layers=cfg["model"]["rnn_layers"],
         dropout=cfg["model"]["dropout"],
+        bidirectional=cfg["model"].get("bidirectional", False),
     ).to(device)
     return model, label_map
 
