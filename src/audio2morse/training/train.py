@@ -33,8 +33,7 @@ def load_config(path: str) -> Dict:
 
 
 def downsample_lengths(lengths: torch.Tensor, pools: int) -> torch.Tensor:
-    factor = 2 ** pools
-    return torch.div(lengths, factor, rounding_mode="floor")
+    return torch.div(lengths, pools, rounding_mode="floor")
 
 
 def set_seed(seed: int) -> torch.Generator:
@@ -147,6 +146,7 @@ def main():
         input_dim=cfg["data"]["n_mels"],
         vocab_size=len(label_map),
         cnn_channels=cfg["model"]["cnn_channels"],
+        pool_kernel=cfg["model"].get("pool_kernel"),
         rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
         rnn_layers=cfg["model"]["rnn_layers"],
         dropout=cfg["model"]["dropout"],
@@ -175,7 +175,7 @@ def main():
         checkpoint_root = checkpoint_root / args.run_name
     os.makedirs(checkpoint_root, exist_ok=True)
     best_val = float("inf")
-    downsample_factor = len(cfg["model"]["cnn_channels"])
+    downsample_factor = getattr(model, "time_pool_factor", 1)
     epoch_history = []
     start_epoch = 1
     patience = cfg["training"].get("early_stop_patience", None)

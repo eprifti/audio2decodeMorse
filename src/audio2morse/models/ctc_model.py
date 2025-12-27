@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Sequence
 
 import torch
 import torch.nn as nn
@@ -10,6 +10,7 @@ class CTCMorseModel(nn.Module):
         input_dim: int,
         vocab_size: int,
         cnn_channels: List[int],
+        pool_kernel: Sequence[Sequence[int]] = None,
         rnn_hidden_size: int,
         rnn_layers: int = 2,
         dropout: float = 0.1,
@@ -17,16 +18,25 @@ class CTCMorseModel(nn.Module):
         super().__init__()
         convs = []
         in_ch = 1
-        for ch in cnn_channels:
+        if pool_kernel is None:
+            pool_kernel = [[2, 2] for _ in cnn_channels]
+        time_factor = 1
+        freq_factor = 1
+        for idx, ch in enumerate(cnn_channels):
             convs.append(nn.Conv2d(in_ch, ch, kernel_size=(3, 3), padding=1))
             convs.append(nn.BatchNorm2d(ch))
             convs.append(nn.ReLU())
             convs.append(nn.Dropout2d(p=dropout))
-            convs.append(nn.MaxPool2d(kernel_size=(2, 2)))
+            k_t, k_f = pool_kernel[idx] if idx < len(pool_kernel) else (2, 2)
+            convs.append(nn.MaxPool2d(kernel_size=(k_t, k_f)))
+            time_factor *= k_t
+            freq_factor *= k_f
             in_ch = ch
         self.cnn = nn.Sequential(*convs)
+        self.time_pool_factor = time_factor
+        self.freq_pool_factor = freq_factor
 
-        projected_dim = (input_dim // (2 ** len(cnn_channels))) * cnn_channels[-1]
+        projected_dim = (input_dim // freq_factor) * cnn_channels[-1]
         self.proj = nn.Sequential(
             nn.Linear(projected_dim, rnn_hidden_size),
             nn.LayerNorm(rnn_hidden_size),

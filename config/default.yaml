@@ -24,7 +24,12 @@ labels:
 
 model:
   cnn_channels: [32, 64, 128]
-  rnn_hidden_size: 192
+  # Pool only in frequency (time stride 1) for the first two blocks, light pool in time on the last.
+  pool_kernel:
+    - [1, 2]
+    - [1, 2]
+    - [2, 2]
+  rnn_hidden_size: 256
   rnn_layers: 3
   dropout: 0.3
 
