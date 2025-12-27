@@ -1,4 +1,4 @@
-input: texts.txt
+input: data/texts.txt
 out_dir: data/audio
 manifest: data/manifests/train.jsonl
 test_manifest: data/manifests/test.jsonl

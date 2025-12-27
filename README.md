@@ -56,7 +56,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - Generate tone-based WAVs and a manifest (append mode) with:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
-    --input texts.txt \
+    --input data/texts.txt \
     --out-dir data/audio \
     --manifest data/manifests/train.jsonl \
     --sample-rate 16000 \
@@ -71,7 +71,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```bash
   # Generate 100 extra messages composed of the chars QZ? with lengths 3–8
   PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
-    --input texts.txt \
+    --input data/texts.txt \
     --out-dir data/audio \
     --manifest data/manifests/train.jsonl \
     --target-chars QZ? \
@@ -84,6 +84,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
     --config config/generation.yaml
   ```
+  By default this reads `data/texts.txt`, which now contains a diverse set of phrases, punctuation, numbers, and operating phrases to cover the full alphabet.
 
 ## Training
 - Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.
