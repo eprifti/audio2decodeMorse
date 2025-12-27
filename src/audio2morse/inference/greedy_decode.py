@@ -172,11 +172,14 @@ def main():
         device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
     try:
+        print(f"Using device: {device}")
+        print(f"Loading checkpoint: {args.checkpoint}")
         state_dict, cfg, alphabet = load_checkpoint(Path(args.checkpoint))
         model, label_map = prepare_model(cfg, alphabet, device)
         model.load_state_dict(state_dict)
         model.eval()
 
+        print(f"Decoding audio: {args.audio}")
         mel = load_audio(Path(args.audio), cfg).unsqueeze(0).to(device)
         with torch.no_grad():
             log_probs = model(mel)
