@@ -79,6 +79,11 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
     --target-min-len 3 \
     --target-max-len 8
   ```
+- You can also drive generation from a YAML config (see `config/generation.yaml` for a full-coverage 10k example with broad speed/pitch/amp variation and alphabet oversampling):
+  ```bash
+  PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
+    --config config/generation.yaml
+  ```
 
 ## Training
 - Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.

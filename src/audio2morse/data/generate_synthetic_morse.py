@@ -28,6 +28,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import soundfile as sf
+import yaml
 
 from audio2morse.data.morse_map import MORSE_CODE
 
@@ -114,6 +115,7 @@ def save_waveform_plot(waveform: np.ndarray, sample_rate: int, path: Path) -> No
 
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic Morse WAVs and manifest.")
+    parser.add_argument("--config", type=str, default=None, help="Optional YAML config to override CLI defaults.")
     parser.add_argument("--input", required=True, help="Text file with one message per line.")
     parser.add_argument("--out-dir", required=True, help="Directory to write WAV files.")
     parser.add_argument("--manifest", required=True, help="Path to train JSONL manifest to write.")
@@ -137,6 +139,19 @@ def main():
     parser.add_argument("--target-min-len", type=int, default=3, help="Minimum length of generated target messages.")
     parser.add_argument("--target-max-len", type=int, default=8, help="Maximum length of generated target messages.")
     args = parser.parse_args()
+
+    # Optionally override defaults with a YAML config.
+    if args.config:
+        cfg_path = Path(args.config)
+        if not cfg_path.exists():
+            raise FileNotFoundError(f"Config not found: {cfg_path}")
+        with cfg_path.open("r") as fp:
+            cfg = yaml.safe_load(fp) or {}
+        # Only update keys that match known args (excluding None/False to avoid stomping CLI-specified values).
+        known_keys = {a.dest for a in parser._actions if a.dest != "help"}
+        for k, v in cfg.items():
+            if k in known_keys and getattr(args, k) in (parser.get_default(k), None):
+                setattr(args, k, v)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
