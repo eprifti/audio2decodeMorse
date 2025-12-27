@@ -155,6 +155,7 @@ def main():
         rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
         rnn_layers=cfg["model"]["rnn_layers"],
         dropout=cfg["model"]["dropout"],
+        bidirectional=cfg["model"].get("bidirectional", False),
     ).to(device)
 
     criterion = nn.CTCLoss(blank=blank_idx, zero_infinity=True)

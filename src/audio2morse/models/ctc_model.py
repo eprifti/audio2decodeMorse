@@ -13,6 +13,7 @@ class CTCMorseModel(nn.Module):
         rnn_hidden_size: int,
         rnn_layers: int = 2,
         dropout: float = 0.1,
+        bidirectional: bool = False,
     ) -> None:
         super().__init__()
         convs = []
@@ -36,11 +37,12 @@ class CTCMorseModel(nn.Module):
             hidden_size=rnn_hidden_size,
             num_layers=rnn_layers,
             batch_first=True,
-            bidirectional=True,
+            bidirectional=bidirectional,
             dropout=dropout,
         )
+        rnn_out_dim = rnn_hidden_size * (2 if bidirectional else 1)
         self.classifier = nn.Sequential(
-            nn.Linear(rnn_hidden_size * 2, rnn_hidden_size),
+            nn.Linear(rnn_out_dim, rnn_hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(rnn_hidden_size, vocab_size),

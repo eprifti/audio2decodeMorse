@@ -15,18 +15,18 @@ To train with a specific name:
 PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
   -m audio2morse.training.train \
   --config config/default.yaml \
-  --run-name baseline_small_cnn2_bilstm128
+  --run-name baseline_small_cnn2_lstm128
 ```
 
 To decode with that run:
 ```bash
 PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
   -m audio2morse.inference.greedy_decode \
-  --checkpoint outputs/baseline_small_cnn2_bilstm128/best.pt \
+  --checkpoint outputs/baseline_small_cnn2_lstm128/best.pt \
   --audio data/audio/example.wav \
   --beam-size 5
 ```
 
 Alternate configs:
-- `config/small_baseline.yaml`: smaller model (cnn_channels [32, 64], rnn_hidden_size 128, rnn_layers 2, dropout 0.1).
-  Example run: `--config config/small_baseline.yaml --run-name baseline_small_cnn2_bilstm128`.
+- `config/small_baseline.yaml`: smaller model (cnn_channels [32, 64], rnn_hidden_size 128, rnn_layers 2, dropout 0.1, unidirectional).
+  Example run: `--config config/small_baseline.yaml --run-name baseline_small_cnn2_lstm128`.

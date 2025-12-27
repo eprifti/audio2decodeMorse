@@ -27,6 +27,7 @@ model:
   rnn_hidden_size: 128
   rnn_layers: 2
   dropout: 0.1
+  bidirectional: false
 
 training:
   batch_size: 8
