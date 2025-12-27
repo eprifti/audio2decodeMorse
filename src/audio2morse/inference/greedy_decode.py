@@ -1,15 +1,17 @@
 """
 Command-line helper for loading a trained Morse CTC model and decoding a single
-audio file with simple greedy decoding.
+audio file with greedy decoding or a small beam search.
 
 Usage example (from repo root):
     PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \\
-        --checkpoint outputs/best.pt \\
-        --audio data/audio/example.wav
+        --checkpoint outputs/run1/best.pt \\
+        --audio data/audio/example.wav \\
+        --beam-size 5
 """
 import argparse
 import math
 from math import log
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -154,29 +156,42 @@ def main():
     CLI entrypoint:
       --checkpoint: path to a .pt file saved by training
       --audio: path to a WAV to decode
-    The script auto-selects MPS on Apple, then CUDA, else CPU.
+      --device: optional override (cpu|cuda|mps)
+    The script auto-selects MPS on Apple, then CUDA, else CPU unless overridden.
     """
     parser = argparse.ArgumentParser(description="Greedy decode Morse audio file.")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained checkpoint.")
     parser.add_argument("--audio", type=str, required=True, help="Path to WAV file to decode.")
     parser.add_argument("--beam-size", type=int, default=1, help="Beam size >1 enables CTC beam search.")
+    parser.add_argument("--device", type=str, choices=["cpu", "cuda", "mps"], default=None, help="Force device.")
     args = parser.parse_args()
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
-    state_dict, cfg, alphabet = load_checkpoint(Path(args.checkpoint))
-    model, label_map = prepare_model(cfg, alphabet, device)
-    model.load_state_dict(state_dict)
-    model.eval()
-
-    mel = load_audio(Path(args.audio), cfg).unsqueeze(0).to(device)
-    with torch.no_grad():
-        log_probs = model(mel)
-    idx_to_char = index_to_char(alphabet)
-    if args.beam_size > 1:
-        text = ctc_beam_search(log_probs, idx_to_char, beam_size=args.beam_size)
+    if args.device:
+        device = torch.device(args.device)
     else:
-        text = greedy_decode(log_probs, idx_to_char)
-    print(text)
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+
+    try:
+        state_dict, cfg, alphabet = load_checkpoint(Path(args.checkpoint))
+        model, label_map = prepare_model(cfg, alphabet, device)
+        model.load_state_dict(state_dict)
+        model.eval()
+
+        mel = load_audio(Path(args.audio), cfg).unsqueeze(0).to(device)
+        with torch.no_grad():
+            log_probs = model(mel)
+        idx_to_char = index_to_char(alphabet)
+        if args.beam_size > 1:
+            text = ctc_beam_search(log_probs, idx_to_char, beam_size=args.beam_size)
+        else:
+            text = greedy_decode(log_probs, idx_to_char)
+        print(text)
+    except Exception as e:
+        import traceback
+
+        print(f"Error during inference: {e}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
