@@ -8,4 +8,5 @@ data/
 analyses/combined_with_preds.*
 analyses/combined_manifests.*
 analyses/figures/
+analyses/per_char_errors.csv
 .DS_Store
