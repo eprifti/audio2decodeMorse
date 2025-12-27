@@ -48,3 +48,4 @@ Alternate configs:
   Example run: `--config config/baseline_cnn3_bilstm256.yaml --run-name baseline_cnn3_bilstm256`.
 - `config/baseline_cnn3_bilstm256_clean.yaml`: same as above but with aug disabled, weight decay 0, scheduler off, 20 epochs.
   Example run: `--config config/baseline_cnn3_bilstm256_clean.yaml --run-name baseline_cnn3_bilstm256_clean`.
+- `config/baseline_cnn3_bilstm256_full.yaml`: same clean settings but pointing to the full varying dataset under `data/datasets/full_vary/`.
