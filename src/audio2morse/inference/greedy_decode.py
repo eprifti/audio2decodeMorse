@@ -9,7 +9,8 @@ Usage example (from repo root):
 """
 import argparse
 from pathlib import Path
-from typing import Dict, List
+from math import logaddexp
+from typing import Dict, List, Tuple
 
 import soundfile as sf
 import torch
@@ -84,6 +85,50 @@ def greedy_decode(log_probs: torch.Tensor, idx_to_char: List[str]) -> str:
     return "".join(decoded)
 
 
+def ctc_beam_search(log_probs: torch.Tensor, idx_to_char: List[str], beam_size: int = 5) -> str:
+    """
+    Simple prefix beam search for CTC. Keeps top `beam_size` beams at each
+    timestep using log-probabilities. Suitable for small alphabets.
+    """
+    # log_probs: (T, 1, V)
+    lp = log_probs.squeeze(1)  # (T, V)
+    blank_idx = len(idx_to_char) - 1
+    beams: Dict[str, Tuple[float, float]] = {"": (0.0, -float("inf"))}  # prefix -> (p_blank, p_nonblank)
+
+    for t in range(lp.size(0)):
+        next_beams: Dict[str, Tuple[float, float]] = {}
+        frame = lp[t]
+        for prefix, (p_b, p_nb) in beams.items():
+            # Stay at blank
+            p_blank = logaddexp(p_b + frame[blank_idx].item(), p_nb + frame[blank_idx].item())
+            best_b, best_nb = next_beams.get(prefix, (-float("inf"), -float("inf")))
+            next_beams[prefix] = (max(best_b, p_blank), best_nb)
+
+            last_char = prefix[-1] if prefix else None
+            for idx, char in enumerate(idx_to_char):
+                if idx == blank_idx:
+                    continue
+                p_char = frame[idx].item()
+                if last_char == char:
+                    new_p_nb = logaddexp(p_nb + p_char, best_nb)
+                    next_beams[prefix] = (next_beams[prefix][0], new_p_nb)
+                else:
+                    new_pref = prefix + char
+                    nb_old = next_beams.get(new_pref, (-float("inf"), -float("inf")))[1]
+                    new_p_nb = logaddexp(logaddexp(p_b + p_char, p_nb + p_char), nb_old)
+                    next_beams[new_pref] = (next_beams.get(new_pref, (-float("inf"), -float("inf")))[0], new_p_nb)
+
+        # Prune
+        beams = {}
+        for pref, (p_b, p_nb) in sorted(
+            next_beams.items(), key=lambda kv: logaddexp(kv[1][0], kv[1][1]), reverse=True
+        )[:beam_size]:
+            beams[pref] = (p_b, p_nb)
+
+    best_prefix, (p_b, p_nb) = max(beams.items(), key=lambda kv: logaddexp(kv[1][0], kv[1][1]))
+    return best_prefix
+
+
 def main():
     """
     CLI entrypoint:
@@ -94,6 +139,7 @@ def main():
     parser = argparse.ArgumentParser(description="Greedy decode Morse audio file.")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained checkpoint.")
     parser.add_argument("--audio", type=str, required=True, help="Path to WAV file to decode.")
+    parser.add_argument("--beam-size", type=int, default=1, help="Beam size >1 enables CTC beam search.")
     args = parser.parse_args()
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
@@ -106,7 +152,10 @@ def main():
     with torch.no_grad():
         log_probs = model(mel)
     idx_to_char = index_to_char(alphabet)
-    text = greedy_decode(log_probs, idx_to_char)
+    if args.beam_size > 1:
+        text = ctc_beam_search(log_probs, idx_to_char, beam_size=args.beam_size)
+    else:
+        text = greedy_decode(log_probs, idx_to_char)
     print(text)
 
 

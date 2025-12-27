@@ -5,6 +5,10 @@ __pycache__/
 *.pyc
 outputs/
 data/
+!src/
+!src/audio2morse/
+!src/audio2morse/data/
+!src/audio2morse/data/**
 analyses/combined_with_preds.*
 analyses/combined_manifests.*
 analyses/figures/

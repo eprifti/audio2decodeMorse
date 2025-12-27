@@ -111,6 +111,7 @@ def main():
         frame_step_ms=cfg["data"]["frame_step_ms"],
         label_map=label_map,
         max_duration_s=cfg["data"]["max_duration_s"],
+        augment=cfg["data"].get("augment"),
     )
     val_ds = MorseAudioDataset(
         manifest_path=cfg["data"]["val_manifest"],
@@ -120,6 +121,7 @@ def main():
         frame_step_ms=cfg["data"]["frame_step_ms"],
         label_map=label_map,
         max_duration_s=cfg["data"]["max_duration_s"],
+        augment=None,  # no augmentation on validation
     )
 
     train_loader = DataLoader(

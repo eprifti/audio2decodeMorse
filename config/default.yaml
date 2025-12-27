@@ -6,6 +6,12 @@ data:
   frame_length_ms: 25
   frame_step_ms: 10
   max_duration_s: 12
+  augment:
+    specaugment:
+      enabled: true
+      freq_mask_param: 8
+      time_mask_param: 30
+      num_masks: 2
 
 labels:
   # Covers all symbols in src/audio2morse/data/morse_map.py plus space.

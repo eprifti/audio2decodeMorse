@@ -67,6 +67,18 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - This writes `synthetic_*.wav` files and appends entries to the JSONL manifest.
 - Create a separate `texts_val.txt` if you want a validation set and point the manifest to `data/manifests/val.jsonl`.
 - Flags `--wpm`, `--freq`, and `--amp` can fix those values; otherwise per-sample values are uniformly sampled from the min/max ranges to add variability.
+- To over-sample troublesome symbols, add targeted synthetic lines on the fly:
+  ```bash
+  # Generate 100 extra messages composed of the chars QZ? with lengths 3–8
+  PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
+    --input texts.txt \
+    --out-dir data/audio \
+    --manifest data/manifests/train.jsonl \
+    --target-chars QZ? \
+    --target-samples 100 \
+    --target-min-len 3 \
+    --target-max-len 8
+  ```
 
 ## Training
 - Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.
@@ -75,6 +87,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   PYTHONPATH=src python3 -m audio2morse.training.train --config config/default.yaml
   ```
 - Checkpoints are saved in `outputs/` by default (configurable).
+- Default training uses SpecAugment (time/frequency masking) to improve robustness; adjust/disable in `data.augment.specaugment`.
 
 ## Inference
 - After training, decode an audio file with greedy decoding:
@@ -84,6 +97,13 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
     --audio data/audio/example.wav
   ```
 - The script prints the predicted text.
+- For potentially better accuracy, enable a small CTC beam search:
+  ```bash
+  PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
+    --checkpoint outputs/best.pt \
+    --audio data/audio/example.wav \
+    --beam-size 5
+  ```
 
 ## Project layout
 - `config/` – YAML configs for experiments.
