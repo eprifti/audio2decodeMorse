@@ -6,7 +6,7 @@ train/val/test manifests, and write a combined file with a `partition`,
 Example:
     PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
       analyses/add_predictions.py \
-      --checkpoint outputs_v2/best.pt \
+      --checkpoint outputs/best.pt \
       --train data/manifests/train.jsonl \
       --val data/manifests/val.jsonl \
       --test data/manifests/test.jsonl \

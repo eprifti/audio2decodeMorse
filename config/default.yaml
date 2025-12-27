@@ -25,6 +25,6 @@ training:
   weight_decay: 0.0
   grad_clip: 5.0
   log_interval: 20
-  checkpoint_dir: outputs_v2
+  checkpoint_dir: outputs
   seed: 42
   early_stop_patience: 3  # set to null to disable early stopping
