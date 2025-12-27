@@ -17,6 +17,13 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
   --config config/baseline_small_cnn2_lstm128.yaml \
   --run-name baseline_small_cnn2_lstm128
 ```
+Or train the larger 3-layer BiLSTM baseline:
+```bash
+PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
+  -m audio2morse.training.train \
+  --config config/baseline_cnn3_bilstm256.yaml \
+  --run-name baseline_cnn3_bilstm256
+```
 
 To decode with that run:
 ```bash
@@ -30,3 +37,5 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
 Alternate configs:
 - `config/small_baseline.yaml`: smaller model (cnn_channels [32, 64], rnn_hidden_size 128, rnn_layers 2, dropout 0.1, unidirectional).
   Example run: `--config config/small_baseline.yaml --run-name baseline_small_cnn2_lstm128`.
+- `config/baseline_cnn3_bilstm256.yaml`: larger model (cnn_channels [32, 64, 128], rnn_hidden_size 256, rnn_layers 3, dropout 0.2, bidirectional).
+  Example run: `--config config/baseline_cnn3_bilstm256.yaml --run-name baseline_cnn3_bilstm256`.
