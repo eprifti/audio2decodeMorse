@@ -35,9 +35,12 @@ dir.create(opts$`out-dir`, showWarnings = FALSE, recursive = TRUE)
 
 df <- read_csv(opts$input, show_col_types = FALSE)
 
-if (!all(c("partition", "loss", "freq_hz", "amplitude", "wpm") %in% names(df))) {
-  stop("Input is missing required columns: partition, loss, freq_hz, amplitude, wpm")
+required_cols <- c("partition", "loss", "freq_hz", "amplitude", "wpm")
+missing <- required_cols[!required_cols %in% names(df)]
+if (length(missing) > 0) {
+  stop(paste("Input is missing required columns:", paste(missing, collapse = ", ")))
 }
+has_text_len <- "text_len" %in% names(df)
 
 # Precompute log-loss for models/plots (avoid log(0)).
 df <- df %>% mutate(log_loss = log(loss + 1e-8))
@@ -53,6 +56,7 @@ summary_stats <- df %>%
     freq_mean = mean(freq_hz, na.rm = TRUE),
     amp_mean = mean(amplitude, na.rm = TRUE),
     wpm_mean = mean(wpm, na.rm = TRUE),
+    text_len_mean = if (has_text_len) mean(text_len, na.rm = TRUE) else NA_real_,
     .groups = "drop"
   )
 
@@ -148,8 +152,26 @@ p7 <- ggplot(df, aes(x = freq_hz, y = wpm, z = log_loss)) +
 ggsave(file.path(opts$`out-dir`, "loss_freq_wpm_heatmap.png"), p7, width = 9, height = 5, dpi = 200)
 
 # Correlation matrix for continuous vars.
-cor_mat <- cor(df %>% select(log_loss, loss, freq_hz, amplitude, wpm), use = "complete.obs")
+cont_vars <- c("log_loss", "loss", "freq_hz", "amplitude", "wpm")
+if (has_text_len) cont_vars <- c(cont_vars, "text_len")
+cor_mat <- cor(df %>% select(any_of(cont_vars)), use = "complete.obs")
 write.csv(cor_mat, file.path(opts$`out-dir`, "correlation_matrix.csv"))
+
+# Loss vs text length (if available).
+if (has_text_len) {
+  p9 <- ggplot(df, aes(x = text_len, y = loss, color = partition)) +
+    geom_point(alpha = 0.2, size = 0.9) +
+    geom_smooth(se = FALSE, method = "loess") +
+    scale_y_log10(labels = label_number()) +
+    labs(
+      title = "Loss vs text length",
+      x = "Text length (characters)", y = "Loss (log scale)", color = "Partition"
+    ) +
+    theme_minimal(base_size = 12)
+  ggsave(file.path(opts$`out-dir`, "loss_vs_text_length.png"), p9, width = 7, height = 4, dpi = 200)
+} else {
+  message("text_len column not found; skipping text length plots.")
+}
 
 # Alphabet-level error rates (if per_char_errors.csv exists).
 char_err_path <- opts$`char-errors`

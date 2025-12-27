@@ -210,6 +210,7 @@ def main():
             {
                 "audio_filepath": str(wav_path),
                 "text": msg.upper(),
+                "text_len": len(msg),
                 "freq_hz": freq,
                 "wpm": wpm,
                 "amplitude": amp,
