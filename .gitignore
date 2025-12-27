@@ -1,0 +1,12 @@
+.venv/
+.venv311/
+.matplotlib_cache/
+__pycache__/
+*.pyc
+outputs/
+outputs_v2/
+data/
+analyses/combined_with_preds.*
+analyses/combined_manifests.*
+analyses/figures/
+.DS_Store
