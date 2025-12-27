@@ -85,6 +85,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
     --config config/generation.yaml
   ```
   By default this reads `data/texts.txt`, which now contains a diverse set of phrases, punctuation, numbers, and operating phrases to cover the full alphabet.
+  You can still override any field on the CLI (e.g., `--num-samples 2000`); required args are satisfied by the config.
 
 ## Training
 - Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.

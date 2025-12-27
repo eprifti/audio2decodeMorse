@@ -116,9 +116,9 @@ def save_waveform_plot(waveform: np.ndarray, sample_rate: int, path: Path) -> No
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic Morse WAVs and manifest.")
     parser.add_argument("--config", type=str, default=None, help="Optional YAML config to override CLI defaults.")
-    parser.add_argument("--input", required=True, help="Text file with one message per line.")
-    parser.add_argument("--out-dir", required=True, help="Directory to write WAV files.")
-    parser.add_argument("--manifest", required=True, help="Path to train JSONL manifest to write.")
+    parser.add_argument("--input", required=False, help="Text file with one message per line.")
+    parser.add_argument("--out-dir", required=False, help="Directory to write WAV files.")
+    parser.add_argument("--manifest", required=False, help="Path to train JSONL manifest to write.")
     parser.add_argument("--test-manifest", help="Optional path to test JSONL manifest; auto-created if train_ratio<1.")
     parser.add_argument("--train-ratio", type=float, default=0.9, help="Fraction of samples to assign to train.")
     parser.add_argument("--sample-rate", type=int, default=16000, help="Sample rate for output WAVs.")
@@ -152,6 +152,11 @@ def main():
         for k, v in cfg.items():
             if k in known_keys and getattr(args, k) in (parser.get_default(k), None):
                 setattr(args, k, v)
+
+    # Validate required fields after applying config/CLI overrides.
+    missing = [name for name in ["input", "out_dir", "manifest"] if getattr(args, name) in (None, "")]
+    if missing:
+        raise ValueError(f"Missing required arguments (provide via CLI or --config): {', '.join(missing)}")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
