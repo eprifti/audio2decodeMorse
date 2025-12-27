@@ -101,8 +101,9 @@ def main():
     parser.add_argument("--train", required=True, help="Train manifest JSONL.")
     parser.add_argument("--val", required=True, help="Val manifest JSONL.")
     parser.add_argument("--test", required=True, help="Test manifest JSONL.")
-    parser.add_argument("--out-parquet", default="analyses/combined_with_preds.parquet", help="Output Parquet path.")
-    parser.add_argument("--out-csv", default="analyses/combined_with_preds.csv", help="Output CSV path.")
+    parser.add_argument("--run-dir", default=None, help="Optional run directory (e.g., outputs/run1); if set, outputs are written there.")
+    parser.add_argument("--out-parquet", default=None, help="Output Parquet path.")
+    parser.add_argument("--out-csv", default=None, help="Output CSV path.")
     args = parser.parse_args()
 
     device = get_device()
@@ -152,8 +153,14 @@ def main():
                     rows.append(row)
 
     df = pd.DataFrame(rows)
-    out_parquet = Path(args.out_parquet)
-    out_csv = Path(args.out_csv)
+    if args.run_dir:
+        base = Path(args.run_dir)
+        out_parquet = base / "combined_with_preds.parquet"
+        out_csv = base / "combined_with_preds.csv"
+    else:
+        out_parquet = Path(args.out_parquet or "analyses/combined_with_preds.parquet")
+        out_csv = Path(args.out_csv or "analyses/combined_with_preds.csv")
+
     out_parquet.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_parquet, index=False)
     df.to_csv(out_csv, index=False)

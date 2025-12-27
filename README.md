@@ -100,9 +100,9 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.
 - Run training:
   ```bash
-  PYTHONPATH=src python3 -m audio2morse.training.train --config config/default.yaml
+  PYTHONPATH=src python3 -m audio2morse.training.train --config config/default.yaml --run-name run1
   ```
-- Checkpoints are saved in `outputs/` by default (configurable).
+- Checkpoints and loss curves are saved under `outputs/<run-name>/` (root is configurable in `training.checkpoint_dir`).
 - Default training uses SpecAugment (time/frequency masking) to improve robustness; adjust/disable in `data.augment.specaugment`.
 - Additional waveform augments (random gain, light noise) are enabled by default in `data.augment.waveform`.
 - Learning-rate schedule: ReduceLROnPlateau on validation loss is enabled (see `training.lr_scheduler`); weight decay set to 1e-4; slightly smaller/lower-dropout RNN to reduce overfitting.
@@ -111,14 +111,14 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - After training, decode an audio file with greedy decoding:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
-    --checkpoint outputs/best.pt \
+    --checkpoint outputs/run1/best.pt \
     --audio data/audio/example.wav
   ```
 - The script prints the predicted text.
 - For potentially better accuracy, enable a small CTC beam search:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
-    --checkpoint outputs/best.pt \
+    --checkpoint outputs/run1/best.pt \
     --audio data/audio/example.wav \
     --beam-size 5
   ```

@@ -27,9 +27,18 @@ option_list <- list(
   make_option(c("-o", "--out-dir"), default = "analyses/figures",
               help = "Directory to write plots"),
   make_option(c("-c", "--char-errors"), default = "analyses/per_char_errors.csv",
-              help = "Optional path to per_char_errors.csv (from per_char_errors.py) for alphabet-level plots")
+              help = "Optional path to per_char_errors.csv (from per_char_errors.py) for alphabet-level plots"),
+  make_option(c("-r", "--run-dir"), default = NULL,
+              help = "Optional run directory (e.g., outputs/run1); overrides out-dir to <run-dir>/figures by default")
 )
 opts <- parse_args(OptionParser(option_list = option_list))
+
+if (!is.null(opts$`run-dir`)) {
+  opts$`out-dir` <- file.path(opts$`run-dir`, "figures")
+  if (opts$`char-errors` == "analyses/per_char_errors.csv") {
+    opts$`char-errors` <- file.path(opts$`run-dir`, "per_char_errors.csv")
+  }
+}
 
 dir.create(opts$`out-dir`, showWarnings = FALSE, recursive = TRUE)
 

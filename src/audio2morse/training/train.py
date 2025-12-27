@@ -91,6 +91,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train Morse audio CTC model.")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config.")
     parser.add_argument("--resume", type=str, help="Optional path to checkpoint to resume from.")
+    parser.add_argument("--run-name", type=str, default=None, help="Optional name for this run (creates outputs/<run-name>).")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -169,7 +170,10 @@ def main():
             verbose=True,
         )
 
-    os.makedirs(cfg["training"]["checkpoint_dir"], exist_ok=True)
+    checkpoint_root = Path(cfg["training"]["checkpoint_dir"])
+    if args.run_name:
+        checkpoint_root = checkpoint_root / args.run_name
+    os.makedirs(checkpoint_root, exist_ok=True)
     best_val = float("inf")
     downsample_factor = len(cfg["model"]["cnn_channels"])
     epoch_history = []
@@ -201,7 +205,7 @@ def main():
             scheduler.step(val_loss)
         epoch_history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
-        ckpt_path = Path(cfg["training"]["checkpoint_dir"]) / f"epoch_{epoch}.pt"
+        ckpt_path = checkpoint_root / f"epoch_{epoch}.pt"
         torch.save(
             {
                 "model_state": model.state_dict(),
@@ -209,10 +213,10 @@ def main():
                 "alphabet": alphabet,
             },
             ckpt_path,
-        )
+            )
         if val_loss < best_val:
             best_val = val_loss
-            best_path = Path(cfg["training"]["checkpoint_dir"]) / "best.pt"
+            best_path = checkpoint_root / "best.pt"
             torch.save(
                 {
                     "model_state": model.state_dict(),
@@ -227,7 +231,7 @@ def main():
             patience_counter += 1
 
         # Write/append loss history in real time
-        metrics_path = Path(cfg["training"]["checkpoint_dir"]) / "loss_history.csv"
+        metrics_path = checkpoint_root / "loss_history.csv"
         if not metrics_path.exists():
             with metrics_path.open("w") as fp:
                 fp.write("epoch,train_loss,val_loss\n")
@@ -239,7 +243,7 @@ def main():
             break
 
     # Save loss history to CSV
-    metrics_path = Path(cfg["training"]["checkpoint_dir"]) / "loss_history.csv"
+    metrics_path = checkpoint_root / "loss_history.csv"
     if epoch_history:
         with metrics_path.open("w") as fp:
             fp.write("epoch,train_loss,val_loss\n")
@@ -257,7 +261,7 @@ def main():
     plt.title("CTC Loss")
     plt.legend()
     plt.tight_layout()
-    plot_path = Path(cfg["training"]["checkpoint_dir"]) / "loss_curve.png"
+    plot_path = checkpoint_root / "loss_curve.png"
     plt.savefig(plot_path)
     print(f"Saved loss history to {metrics_path} and plot to {plot_path}")
 
