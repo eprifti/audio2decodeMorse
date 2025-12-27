@@ -76,9 +76,10 @@ def plot_waveform_and_spec(
     if save_path:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path)
-        print(f"Saved plot to: {save_path}")
+        plt.close(fig)
     else:
         plt.show()
+        plt.close(fig)
 
 
 def main():
