@@ -14,7 +14,7 @@ To train with a specific name:
 ```bash
 PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src .venv311/bin/python \
   -m audio2morse.training.train \
-  --config config/default.yaml \
+  --config config/baseline_small_cnn2_lstm128.yaml \
   --run-name baseline_small_cnn2_lstm128
 ```
 

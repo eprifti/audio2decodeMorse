@@ -101,7 +101,7 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - Run training (timestamped run name by default; or pass your own):
   ```bash
   PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src python3 -m audio2morse.training.train \
-    --config config/default.yaml \
+    --config config/baseline_small_cnn2_lstm128.yaml \
     --run-name baseline_small_cnn2_lstm128
   ```
 - If you omit `--run-name`, a timestamped name like `run-20241227-153045` is created. Checkpoints and loss curves are saved under `outputs/<run-name>/` (root is configurable in `training.checkpoint_dir`). A copy of the config is stored as `config_used.yaml` in the run folder. Early stopping is disabled by default; training runs for the configured epochs.
