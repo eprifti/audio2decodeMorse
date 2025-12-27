@@ -69,7 +69,8 @@ def plot_waveform_and_spec(
         ax_spec.set_ylabel("Mel bins")
         ax_spec.set_xlabel("Frames")
         ax_spec.set_title("Log-mel spectrogram")
-        fig.colorbar(im, ax=ax_spec, label="dB")
+        cbar = fig.colorbar(im, ax=ax_spec, orientation="horizontal", pad=0.2, fraction=0.08)
+        cbar.set_label("dB")
 
     fig.tight_layout()
 
