@@ -70,8 +70,12 @@ class MorseAudioDataset(Dataset):
             freq_param = int(spec_cfg.get("freq_mask_param", 8))
             time_param = int(spec_cfg.get("time_mask_param", 30))
             num_masks = int(spec_cfg.get("num_masks", 2))
-            self.freq_masks = [torchaudio.transforms.FrequencyMasking(freq_param=freq_param) for _ in range(num_masks)]
-            self.time_masks = [torchaudio.transforms.TimeMasking(time_mask_param=time_param) for _ in range(num_masks)]
+            self.freq_masks = [
+                torchaudio.transforms.FrequencyMasking(freq_mask_param=freq_param) for _ in range(num_masks)
+            ]
+            self.time_masks = [
+                torchaudio.transforms.TimeMasking(time_mask_param=time_param) for _ in range(num_masks)
+            ]
         else:
             self.freq_masks = []
             self.time_masks = []
