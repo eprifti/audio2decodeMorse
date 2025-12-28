@@ -28,6 +28,7 @@ from tqdm import tqdm
 
 from audio2morse.data.vocab import build_vocab, index_to_char
 from audio2morse.models.ctc_model import CTCMorseModel
+from audio2morse.models.multitask_ctc import MultiTaskCTCMorseModel
 
 
 def get_device() -> torch.device:
@@ -48,17 +49,29 @@ def load_checkpoint(path: Path):
     return ckpt["model_state"], ckpt.get("config"), ckpt.get("alphabet")
 
 
-def prepare_model(cfg: Dict, alphabet: str, device: torch.device) -> CTCMorseModel:
+def prepare_model(cfg: Dict, alphabet: str, device: torch.device):
     label_map = build_vocab(alphabet)
-    model = CTCMorseModel(
-        input_dim=cfg["data"]["n_mels"],
-        vocab_size=len(label_map),
-        cnn_channels=cfg["model"]["cnn_channels"],
-        rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
-        rnn_layers=cfg["model"]["rnn_layers"],
-        dropout=cfg["model"]["dropout"],
-        bidirectional=cfg["model"].get("bidirectional", False),
-    ).to(device)
+    model_type = cfg.get("model", {}).get("type", "ctc")
+    if model_type == "multitask":
+        model = MultiTaskCTCMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+    else:
+        model = CTCMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
     return model, label_map
 
 
@@ -82,6 +95,9 @@ def load_audio(path: Path, cfg: Dict) -> torch.Tensor:
 
 
 def greedy_decode(log_probs: torch.Tensor, idx_to_char: List[str]) -> str:
+    # log_probs expected shape (T, 1, V)
+    if log_probs.dim() == 3 and log_probs.shape[1] != 1:
+        log_probs = log_probs.permute(1, 0, 2)  # fallback to (T,B,V)
     indices = log_probs.argmax(dim=-1).squeeze(1).cpu().numpy().tolist()
     blank_idx = len(idx_to_char) - 1
     decoded = []
@@ -186,8 +202,15 @@ def main():
                 text = entry["text"]
 
                 mel = load_audio(audio_path, cfg).unsqueeze(0).to(device)  # (1,T,F)
-                log_probs = model(mel)  # (T,B,V)
-                input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
+                if isinstance(model, MultiTaskCTCMorseModel):
+                    out = model(mel, torch.tensor([mel.shape[1]], device=device))
+                    log_probs = out["text_log_probs"]  # (B,T',V)
+                    if log_probs.shape[0] == 1:
+                        log_probs = log_probs.permute(1, 0, 2)  # (T',1,V)
+                    input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
+                else:
+                    log_probs = model(mel)  # (T',B,V)
+                    input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
                 targets = text_to_targets(text, label_map, blank_idx).to(device)
                 target_lengths = torch.tensor([targets.numel()], dtype=torch.long, device=device)
 

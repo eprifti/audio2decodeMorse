@@ -100,6 +100,14 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```bash
   ./launch_run_bilstm_clean.sh     # or ./launch_run_bilstm_clean.sh my_run_name
   ```
+- Multi-task prototype (CTC + bit/gap heads):
+  ```bash
+  ./launch_run_multitask.sh        # or ./launch_run_multitask.sh my_run_name
+  ```
+- Multi-task counts prototype (CTC + bit/gap + counts/hist):
+  ```bash
+  ./launch_run_multitask_counts.sh # or ./launch_run_multitask_counts.sh my_run_name
+  ```
 Both scripts regenerate data via `config/generation.yaml`, train with the chosen config, add predictions to train/val/test manifests, and run the R analysis. Outputs live under `outputs/<run-name>/`.
 
 ## Inference
@@ -132,6 +140,26 @@ Both scripts regenerate data via `config/generation.yaml`, train with the chosen
 - Temporal modeling: 3-layer bidirectional LSTM (hidden size 256, dropout 0.2) to capture dot/dash timing.
 - Head: linear projection to vocab logits; CTC loss with a `<BLANK>` token (see `src/audio2morse/models/ctc_model.py`).
 - Configurable in `config/default.yaml` (`model` and `data` sections). You can change channels, RNN depth/width, and dropout there.
+
+### Prototype multi-task model
+- `src/audio2morse/models/multitask_ctc.py` introduces a prototype with auxiliary heads:
+  - Text CTC logits (as usual).
+  - Bit head (dot/dash/blank) and gap head (none/char-gap/word-gap) to encourage better timing/segmentation.
+- See `config/prototype_multitask.yaml` for suggested hyperparameters. Training integration would need extra supervision for the auxiliary heads (bit/gap labels derived from Morse timings).
+
+### Multi-task with counts
+- `src/audio2morse/models/multitask_ctc_counts.py` extends the multi-task model with:
+  - Character count regression head (predicts total characters including spaces).
+  - Character histogram head (bag-of-character counts excluding the blank token).
+- Use `config/prototype_multitask_counts.yaml` and the launcher `launch_run_multitask_counts.sh` to try it. The training loop adds auxiliary MSE losses on counts and per-character counts in addition to the CTC loss.
+
+## Perspectives
+- Temporal context matters for Morse (dot/dash duration and gaps). We currently use LSTMs, but you could swap in:
+  - Temporal CNN/TCN stacks to model short-range timing without recurrence.
+  - Light transformers or conformers with limited attention span for local context.
+- Segmentation-aware training:
+  - Supervise bit/gap heads (or the counts model) using labels derived from manifests (text length, character counts, inferred pauses) to improve boundary detection.
+  - Evaluate per-frame bit/gap accuracy and boundary precision/recall on synthetic data where timing is known.
 
 ## Notes on CTC
 - The model trains with Connectionist Temporal Classification (CTC), which handles variable-length audio → text without pre-aligned labels by using a frame-level “blank” token and collapsing repeats/blanks at decode time.

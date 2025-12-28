@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict
 
 import torch
+import torch.nn.functional as F
 import yaml
 from torch import nn, optim
 from torch.utils.data import DataLoader
@@ -18,6 +19,8 @@ import matplotlib.pyplot as plt
 from audio2morse.data.dataset import MorseAudioDataset, collate_batch
 from audio2morse.data.vocab import build_vocab
 from audio2morse.models.ctc_model import CTCMorseModel
+from audio2morse.models.multitask_ctc import MultiTaskCTCMorseModel
+from audio2morse.models.multitask_ctc_counts import MultiTaskCTCCountsModel
 
 
 def get_device() -> torch.device:
@@ -53,18 +56,41 @@ def set_seed(seed: int) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
 
 
-def train_epoch(model, loader, criterion, optimizer, device, downsample_factor):
+def train_epoch(model, loader, criterion, optimizer, device, downsample_factor, label_map=None, aux_weights=None):
     model.train()
     total_loss = 0.0
-    for feats, feat_lens, targets, target_lens, _ in tqdm(loader, desc="train", leave=False):
+    is_multitask = isinstance(model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel))
+    is_counts = isinstance(model, MultiTaskCTCCountsModel)
+    aux_w = aux_weights or {}
+    blank_idx = label_map["<BLANK>"] if label_map else None
+    for feats, feat_lens, targets, target_lens, _, texts in tqdm(loader, desc="train", leave=False):
         feats = feats.to(device)
         targets = targets.to(device)
 
         optimizer.zero_grad()
-        log_probs = model(feats)
+        if is_multitask:
+            out = model(feats, feat_lens.to(device))
+            log_probs = out["text_log_probs"]  # (B, T', V)
+        else:
+            out = model(feats)
+            log_probs = out  # (T', B, V) from CTCMorseModel
+        if log_probs.dim() == 3 and log_probs.shape[0] == feats.size(0):
+            log_probs = log_probs.permute(1, 0, 2)  # ensure (T, B, V) for CTC
         out_lens = downsample_lengths(feat_lens.to(device), downsample_factor)
         flat_targets = torch.cat([targets[i, :target_lens[i]] for i in range(targets.size(0))]).to(device)
         loss = criterion(log_probs, flat_targets, out_lens, target_lens.to(device))
+        if is_counts and label_map:
+            counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
+            count_loss = F.mse_loss(out["count_pred"], counts)
+            vocab_no_blank = len(label_map) - 1
+            hist_targets = torch.zeros((len(texts), vocab_no_blank), device=device)
+            for i, t in enumerate(texts):
+                for ch in t:
+                    if ch not in label_map or label_map[ch] == blank_idx:
+                        continue
+                    hist_targets[i, label_map[ch]] += 1.0
+            hist_loss = F.mse_loss(out["hist_logits"], hist_targets)
+            loss = loss + aux_w.get("count", 0.1) * count_loss + aux_w.get("hist", 0.1) * hist_loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         optimizer.step()
@@ -73,16 +99,39 @@ def train_epoch(model, loader, criterion, optimizer, device, downsample_factor):
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device, downsample_factor):
+def validate(model, loader, criterion, device, downsample_factor, label_map=None, aux_weights=None):
     model.eval()
     total_loss = 0.0
-    for feats, feat_lens, targets, target_lens, _ in loader:
+    is_multitask = isinstance(model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel))
+    is_counts = isinstance(model, MultiTaskCTCCountsModel)
+    aux_w = aux_weights or {}
+    blank_idx = label_map["<BLANK>"] if label_map else None
+    for feats, feat_lens, targets, target_lens, _, texts in loader:
         feats = feats.to(device)
         targets = targets.to(device)
-        log_probs = model(feats)
+        if is_multitask:
+            out = model(feats, feat_lens.to(device))
+            log_probs = out["text_log_probs"]  # (B, T', V)
+        else:
+            out = model(feats)
+            log_probs = out  # (T', B, V) from CTCMorseModel
+        if log_probs.dim() == 3 and log_probs.shape[0] == feats.size(0):
+            log_probs = log_probs.permute(1, 0, 2)  # ensure (T, B, V) for CTC
         out_lens = downsample_lengths(feat_lens.to(device), downsample_factor)
         flat_targets = torch.cat([targets[i, :target_lens[i]] for i in range(targets.size(0))]).to(device)
         loss = criterion(log_probs, flat_targets, out_lens, target_lens.to(device))
+        if is_counts and label_map:
+            counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
+            count_loss = F.mse_loss(out["count_pred"], counts)
+            vocab_no_blank = len(label_map) - 1
+            hist_targets = torch.zeros((len(texts), vocab_no_blank), device=device)
+            for i, t in enumerate(texts):
+                for ch in t:
+                    if ch not in label_map or label_map[ch] == blank_idx:
+                        continue
+                    hist_targets[i, label_map[ch]] += 1.0
+            hist_loss = F.mse_loss(out["hist_logits"], hist_targets)
+            loss = loss + aux_w.get("count", 0.1) * count_loss + aux_w.get("hist", 0.1) * hist_loss
         total_loss += loss.item()
     return total_loss / max(len(loader), 1)
 
@@ -136,7 +185,7 @@ def main():
         shuffle=True,
         num_workers=cfg["training"]["num_workers"],
         collate_fn=collate_batch,
-        pin_memory=device.type != "cpu",
+        pin_memory=device.type == "cuda",
         generator=rng,
     )
     val_loader = DataLoader(
@@ -145,18 +194,43 @@ def main():
         shuffle=False,
         num_workers=cfg["training"]["num_workers"],
         collate_fn=collate_batch,
-        pin_memory=device.type != "cpu",
+        pin_memory=device.type == "cuda",
     )
 
-    model = CTCMorseModel(
-        input_dim=cfg["data"]["n_mels"],
-        vocab_size=len(label_map),
-        cnn_channels=cfg["model"]["cnn_channels"],
-        rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
-        rnn_layers=cfg["model"]["rnn_layers"],
-        dropout=cfg["model"]["dropout"],
-        bidirectional=cfg["model"].get("bidirectional", False),
-    ).to(device)
+    model_type = cfg["model"].get("type", "ctc")
+    if model_type == "multitask":
+        model = MultiTaskCTCMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+        downsample_factor = model.downsample
+    elif model_type == "multitask_counts":
+        model = MultiTaskCTCCountsModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+        downsample_factor = model.downsample
+    else:
+        model = CTCMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+        downsample_factor = 2 ** len(cfg["model"]["cnn_channels"])  # fixed 2x2 pooling
 
     criterion = nn.CTCLoss(blank=blank_idx, zero_infinity=True)
     optimizer = optim.Adam(
@@ -181,7 +255,6 @@ def main():
     with (checkpoint_root / "config_used.yaml").open("w") as fp:
         yaml.safe_dump(cfg, fp)
     best_val = float("inf")
-    downsample_factor = 2 ** len(cfg["model"]["cnn_channels"])  # fixed 2x2 pooling
     epoch_history = []
     start_epoch = 1
     patience = None  # early stopping disabled
@@ -204,8 +277,25 @@ def main():
         print(f"Starting from epoch {start_epoch}")
 
     for epoch in range(start_epoch, cfg["training"]["epochs"] + 1):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, downsample_factor)
-        val_loss = validate(model, val_loader, criterion, device, downsample_factor)
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            downsample_factor,
+            label_map=label_map,
+            aux_weights=cfg["training"].get("aux_weights"),
+        )
+        val_loss = validate(
+            model,
+            val_loader,
+            criterion,
+            device,
+            downsample_factor,
+            label_map=label_map,
+            aux_weights=cfg["training"].get("aux_weights"),
+        )
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
         if scheduler:
             scheduler.step(val_loss)

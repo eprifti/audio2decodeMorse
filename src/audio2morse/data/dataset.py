@@ -123,12 +123,13 @@ class MorseAudioDataset(Dataset):
             "features": mel,  # (time, mel)
             "targets": targets,
             "utt_id": sample.path.stem,
+            "text": sample.text,
         }
 
 
 def collate_batch(
     batch: List[Dict[str, torch.Tensor]]
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[str]]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[str], List[str]]:
     """Pad variable-length inputs and targets for CTC training."""
     feature_lengths = torch.tensor([item["features"].shape[0] for item in batch], dtype=torch.long)
     target_lengths = torch.tensor([len(item["targets"]) for item in batch], dtype=torch.long)
@@ -142,6 +143,7 @@ def collate_batch(
     padded_targets = torch.full((len(batch), max_target_len), fill_value=pad_value, dtype=torch.long)
 
     utt_ids: List[str] = []
+    texts: List[str] = []
     for i, item in enumerate(batch):
         t_len = item["features"].shape[0]
         padded_feats[i, :t_len] = item["features"]
@@ -149,5 +151,6 @@ def collate_batch(
         y_len = len(item["targets"])
         padded_targets[i, :y_len] = item["targets"]
         utt_ids.append(item["utt_id"])
+        texts.append(item["text"])
 
-    return padded_feats, feature_lengths, padded_targets, target_lengths, utt_ids
+    return padded_feats, feature_lengths, padded_targets, target_lengths, utt_ids, texts
