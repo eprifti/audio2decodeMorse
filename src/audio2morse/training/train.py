@@ -21,6 +21,7 @@ from audio2morse.data.vocab import build_vocab
 from audio2morse.models.ctc_model import CTCMorseModel
 from audio2morse.models.multitask_ctc import MultiTaskCTCMorseModel
 from audio2morse.models.multitask_ctc_counts import MultiTaskCTCCountsModel
+from audio2morse.models.transformer_ctc import TransformerCTCMorseModel
 
 
 def get_device() -> torch.device:
@@ -218,6 +219,18 @@ def main():
             rnn_layers=cfg["model"]["rnn_layers"],
             dropout=cfg["model"]["dropout"],
             bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+        downsample_factor = model.downsample
+    elif model_type == "transformer":
+        model = TransformerCTCMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            d_model=cfg["model"].get("d_model", 256),
+            nhead=cfg["model"].get("nhead", 4),
+            num_layers=cfg["model"].get("num_layers", 4),
+            dim_feedforward=cfg["model"].get("dim_feedforward", 512),
+            dropout=cfg["model"].get("dropout", 0.1),
         ).to(device)
         downsample_factor = model.downsample
     else:
