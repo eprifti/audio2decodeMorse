@@ -173,7 +173,6 @@ def main():
             factor=sched_cfg.get("factor", 0.5),
             patience=sched_cfg.get("patience", 2),
             min_lr=sched_cfg.get("min_lr", 1e-5),
-            verbose=True,
         )
 
     run_name = args.run_name or datetime.now().strftime("run-%Y%m%d-%H%M%S")

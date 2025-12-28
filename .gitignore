@@ -7,6 +7,7 @@ src/**/__pycache__/
 outputs/
 data/
 !data/
+data/datasets/
 !data/texts.txt
 !src/
 !src/audio2morse/

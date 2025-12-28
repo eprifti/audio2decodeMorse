@@ -30,7 +30,7 @@ model:
 
 training:
   batch_size: 8
-  num_workers: 0
+  num_workers: 8  # overlap data loading/feature prep on multi-core CPU
   epochs: 20
   learning_rate: 0.001
   weight_decay: 0.0

@@ -52,33 +52,15 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - The script converts stereo to mono automatically for plotting.
 
 ## Generate synthetic Morse data
-- Prepare a text file with one message per line (uppercase recommended).
-- Generate tone-based WAVs and a manifest (append mode) with:
+- Prepare `data/texts.txt` with one message per line (uppercase recommended).
+- Fast multi-core generation with progress bar (splits train/val/test automatically):
   ```bash
-  PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
-    --input data/texts.txt \
-    --out-dir data/audio \
-    --manifest data/manifests/train.jsonl \
-    --sample-rate 16000 \
-    --wpm-min 18 --wpm-max 25 \
-    --freq-min 500 --freq-max 900 \
-    --amp-min 0.2 --amp-max 0.4
+  PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse --config config/generation.yaml
   ```
-- This writes `synthetic_*.wav` files and appends entries to the JSONL manifest.
-- Create a separate `texts_val.txt` if you want a validation set and point the manifest to `data/manifests/val.jsonl`.
-- Flags `--wpm`, `--freq`, and `--amp` can fix those values; otherwise per-sample values are uniformly sampled from the min/max ranges to add variability.
-- To over-sample troublesome symbols, add targeted synthetic lines on the fly:
-  ```bash
-  # Generate 100 extra messages composed of the chars QZ? with lengths 3–8
-  PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
-    --input data/texts.txt \
-    --out-dir data/audio \
-    --manifest data/manifests/train.jsonl \
-    --target-chars QZ? \
-    --target-samples 100 \
-    --target-min-len 3 \
-    --target-max-len 8
-  ```
+  - Uses all CPU cores by default (`num_workers: -1`), shows a single progress line, and writes WAVs to `data/datasets/simple_baseline/audio`.
+  - Manifests land in `data/datasets/simple_baseline/manifests/{train,val,test}.jsonl` with metadata (`freq_hz`, `wpm`, `amplitude`, `text_len`).
+  - Adjust `config/generation.yaml` to change ranges, sample counts, or target characters; CLI flags still override the config if provided.
+- To over-sample troublesome symbols or phrases, use the `--target-chars` / `--target-samples` or `--target-words-file` options (see `generate_synthetic_morse.py` docstring).
 - You can also drive generation from a YAML config (see `config/generation.yaml` for a full-coverage 10k example with broad speed/pitch/amp variation and alphabet oversampling):
   ```bash
   PYTHONPATH=src python3 -m audio2morse.data.generate_synthetic_morse \
@@ -97,31 +79,42 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```
 
 ## Training
-- Edit `config/default.yaml` to point to your train/validation manifests and tweak hyperparameters.
+- Edit `config/default.yaml` (or the baseline configs in `config/`) to point to your train/validation manifests and tweak hyperparameters.
 - Run training (timestamped run name by default; or pass your own):
   ```bash
   PYTORCH_ENABLE_MPS_FALLBACK=1 PYTHONPATH=src python3 -m audio2morse.training.train \
-    --config config/baseline_cnn3_bilstm256_clean.yaml \
-    --run-name baseline_cnn3_bilstm256_clean
+    --config config/baseline_small_cnn2_lstm128.yaml \
+    --run-name baseline_small_cnn2_lstm128
   ```
 - If you omit `--run-name`, a timestamped name like `run-20241227-153045` is created. Checkpoints and loss curves are saved under `outputs/<run-name>/` (root is configurable in `training.checkpoint_dir`). A copy of the config is stored as `config_used.yaml` in the run folder. Early stopping is disabled by default; training runs for the configured epochs.
 - Default training uses SpecAugment (time/frequency masking) to improve robustness; adjust/disable in `data.augment.specaugment`.
 - Additional waveform augments (random gain, light noise) are enabled by default in `data.augment.waveform`.
 - Learning-rate schedule: ReduceLROnPlateau on validation loss is enabled (see `training.lr_scheduler`); weight decay set to 1e-4.
 
+## One-shot pipeline
+- Small LSTM baseline end-to-end:
+  ```bash
+  ./launch_run_small.sh            # or ./launch_run_small.sh my_run_name
+  ```
+- Clean biLSTM baseline end-to-end:
+  ```bash
+  ./launch_run_bilstm_clean.sh     # or ./launch_run_bilstm_clean.sh my_run_name
+  ```
+Both scripts regenerate data via `config/generation.yaml`, train with the chosen config, add predictions to train/val/test manifests, and run the R analysis. Outputs live under `outputs/<run-name>/`.
+
 ## Inference
 - After training, decode an audio file with greedy decoding:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
-    --checkpoint outputs/baseline_cnn3_bilstm256_clean/best.pt \
-    --audio data/audio/example.wav
+    --checkpoint outputs/baseline_small_cnn2_lstm128/best.pt \
+    --audio data/datasets/simple_baseline/audio/synthetic_00001.wav
   ```
 - The script prints the predicted text.
 - For potentially better accuracy, enable a small CTC beam search:
   ```bash
   PYTHONPATH=src python3 -m audio2morse.inference.greedy_decode \
-    --checkpoint outputs/baseline_cnn3_bilstm256_clean/best.pt \
-    --audio data/audio/example.wav \
+    --checkpoint outputs/baseline_small_cnn2_lstm128/best.pt \
+    --audio data/datasets/simple_baseline/audio/synthetic_00001.wav \
     --beam-size 5
   ```
 
@@ -145,13 +138,11 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
 - Greedy decoding in `inference/greedy_decode.py` simply takes the argmax per frame and collapses repeats/blanks; beam search could improve accuracy but isn’t included here for brevity.
 
 ## Analysis utilities
-- After you’ve run `analyses/add_predictions.py` to enrich manifests with inference text and loss, you can visualize loss vs partition/frequency/WPM/amplitude and fit a simple linear model:
+- After you’ve run `analyses/add_predictions.py` (or `./launch_run.sh`) to enrich manifests with inference text and loss, you can visualize loss vs partition/frequency/WPM/amplitude and fit a simple linear model:
   ```bash
-  Rscript analyses/analyze_preds.R \
-    --input analyses/combined_with_preds.csv \
-    --out-dir analyses/figures
+  Rscript analyses/analyze_preds.R --run-dir outputs/<run-name>
   ```
-  The script installs required R packages if missing and writes plots plus `linear_model_summary.txt` to the output directory.
+  The script installs required R packages if missing and writes plots plus `linear_model_summary.txt` to `outputs/<run-name>/`.
 
 ## License
 This project is licensed under the MIT License (see `LICENSE`).

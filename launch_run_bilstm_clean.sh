@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# End-to-end helper for the clean biLSTM baseline (256x3) on the simple dataset.
+# Usage: ./launch_run_bilstm_clean.sh [run_name]
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+export PYTHONPATH=src
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+# Use more CPU threads for CTC on macOS
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+
+RUN_NAME="${1:-baseline_cnn3_bilstm256_clean_$(date +%Y%m%d_%H%M%S)}"
+GEN_CFG="config/generation.yaml"
+TRAIN_CFG="config/baseline_cnn3_bilstm256_clean.yaml"
+RUN_DIR="outputs/${RUN_NAME}"
+
+echo "==> Generating dataset via ${GEN_CFG}"
+python3 -m audio2morse.data.generate_synthetic_morse --config "${GEN_CFG}"
+
+echo "==> Training run ${RUN_NAME} with ${TRAIN_CFG}"
+python3 -m audio2morse.training.train --config "${TRAIN_CFG}" --run-name "${RUN_NAME}"
+
+CKPT="${RUN_DIR}/best.pt"
+echo "==> Adding predictions to manifests using ${CKPT}"
+python3 analyses/add_predictions.py \
+  --checkpoint "${CKPT}" \
+  --config "${TRAIN_CFG}" \
+  --train data/datasets/simple_baseline/manifests/train.jsonl \
+  --val   data/datasets/simple_baseline/manifests/val.jsonl \
+  --test  data/datasets/simple_baseline/manifests/test.jsonl \
+  --run-dir "${RUN_DIR}"
+
+echo "==> Running R analysis"
+Rscript analyses/analyze_preds.R --run-dir "${RUN_DIR}"
+
+echo "Done. Outputs in ${RUN_DIR}"

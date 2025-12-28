@@ -4,7 +4,8 @@ Quick CLI utility to visualize a WAV file used for Morse decoding experiments.
 Example (from repo root):
     PYTHONPATH=src python3 -m audio2morse.data.visualize_wav \
         --audio data/example.wav \
-        --save outputs/example_waveform.png
+        --save outputs/example_waveform.png \
+        --save-spec outputs/example_logmel.png
 
 If you omit --save, the plot opens in a window (useful in VS Code).
 """
@@ -38,6 +39,7 @@ def plot_waveform_and_spec(
     sr: int,
     title: str,
     save_path: Optional[Path],
+    save_spec_path: Optional[Path],
     show_spec: bool = True,
 ) -> None:
     """Render waveform (and optional log-mel spectrogram) to file or window."""
@@ -77,21 +79,36 @@ def plot_waveform_and_spec(
     if save_path:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path)
-        plt.close(fig)
-    else:
+    if save_spec_path and show_spec:
+        # Save a spectrogram-only view if requested.
+        spec_fig, spec_ax = plt.subplots(1, 1, figsize=(10, 4))
+        spec_im = spec_ax.imshow(spec.numpy(), origin="lower", aspect="auto", cmap="magma")
+        spec_ax.set_ylabel("Mel bins")
+        spec_ax.set_xlabel("Frames")
+        spec_ax.set_title("Log-mel spectrogram")
+        spec_cbar = spec_fig.colorbar(spec_im, ax=spec_ax, orientation="horizontal", pad=0.2, fraction=0.08)
+        spec_cbar.set_label("dB")
+        spec_fig.tight_layout()
+        save_spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_fig.savefig(save_spec_path)
+        plt.close(spec_fig)
+
+    if not save_path:
         plt.show()
-        plt.close(fig)
+    plt.close(fig)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize a WAV file for Morse decoding.")
     parser.add_argument("--audio", type=str, required=True, help="Path to WAV file.")
     parser.add_argument("--save", type=str, help="Optional path to save the plot as PNG. If omitted, opens a window.")
+    parser.add_argument("--save-spec", type=str, help="Optional path to save only the log-mel spectrogram as PNG.")
     parser.add_argument("--no-spec", action="store_true", help="Disable spectrogram; plot waveform only.")
     args = parser.parse_args()
 
     audio_path = Path(args.audio)
     save_path = Path(args.save) if args.save else None
+    save_spec_path = Path(args.save_spec) if args.save_spec else None
 
     wav, sr = load_waveform(audio_path)
     plot_waveform_and_spec(
@@ -99,6 +116,7 @@ def main():
         sr,
         title=f"{audio_path.name} (sr={sr})",
         save_path=save_path,
+        save_spec_path=save_spec_path,
         show_spec=not args.no_spec,
     )
 

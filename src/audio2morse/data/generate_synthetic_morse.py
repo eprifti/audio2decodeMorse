@@ -18,6 +18,8 @@ line, a WAV is generated and a manifest entry is appended to the JSONL file.
 """
 import argparse
 import json
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import List
 
@@ -28,7 +30,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import soundfile as sf
+from tqdm import tqdm
 import yaml
+import torch
+import torchaudio
 
 from audio2morse.data.morse_map import MORSE_CODE
 
@@ -100,17 +105,84 @@ def synthesize_morse(
     return waveform
 
 
-def save_waveform_plot(waveform: np.ndarray, sample_rate: int, path: Path) -> None:
-    """Save a simple waveform plot to PNG."""
+def save_waveform_and_spec(waveform: np.ndarray, sample_rate: int, path: Path) -> None:
+    """Save waveform + log-mel spectrogram with colorbar at bottom."""
     t = np.arange(waveform.shape[0]) / sample_rate
-    plt.figure(figsize=(8, 2))
-    plt.plot(t, waveform, linewidth=0.8)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.tight_layout()
+    wav_t = torch.from_numpy(waveform).unsqueeze(0)  # (1, samples)
+    mel_tf = torchaudio.transforms.MelSpectrogram(
+        sample_rate=sample_rate,
+        n_fft=int(sample_rate * 0.025),
+        hop_length=int(sample_rate * 0.010),
+        n_mels=64,
+    )
+    to_db = torchaudio.transforms.AmplitudeToDB()
+    with torch.no_grad():
+        spec = to_db(mel_tf(wav_t)).squeeze(0)  # (mels, frames)
+
+    fig, (ax_wav, ax_spec) = plt.subplots(
+        2, 1, figsize=(10, 6), gridspec_kw={"height_ratios": [1, 1.5]}, sharex=False
+    )
+    ax_wav.plot(t, waveform, linewidth=0.8)
+    ax_wav.set_title("Waveform")
+    ax_wav.set_xlabel("Time (s)")
+    ax_wav.set_ylabel("Amplitude")
+
+    im = ax_spec.imshow(spec.numpy(), origin="lower", aspect="auto", cmap="magma")
+    ax_spec.set_ylabel("Mel bins")
+    ax_spec.set_xlabel("Frames")
+    ax_spec.set_title("Log-mel spectrogram")
+    cbar = fig.colorbar(im, ax=ax_spec, orientation="horizontal", pad=0.2, fraction=0.08)
+    cbar.set_label("dB")
+
+    fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(path)
-    plt.close()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _generate_one(task):
+    """Worker helper to synthesize one sample. Returns (idx, entry, elapsed_ms)."""
+    (
+        idx,
+        msg,
+        sample_rate,
+        wpm_fixed,
+        wpm_min,
+        wpm_max,
+        freq_fixed,
+        freq_min,
+        freq_max,
+        amp_fixed,
+        amp_min,
+        amp_max,
+        seed,
+        out_dir,
+        plot_dir,
+    ) = task
+    rng = np.random.default_rng(seed + idx)
+    sample_start = time.perf_counter()
+    wpm = wpm_fixed if wpm_fixed is not None else float(rng.uniform(wpm_min, wpm_max))
+    freq = freq_fixed if freq_fixed is not None else float(rng.uniform(freq_min, freq_max))
+    amp = amp_fixed if amp_fixed is not None else float(rng.uniform(amp_min, amp_max))
+    waveform = synthesize_morse(msg, sample_rate=sample_rate, wpm=wpm, freq=freq, amplitude=amp)
+
+    wav_path = out_dir / f"synthetic_{idx:05d}.wav"
+    sf.write(wav_path, waveform, sample_rate)
+
+    if plot_dir:
+        png_path = plot_dir / f"synthetic_{idx:05d}.png"
+        save_waveform_and_spec(waveform, sample_rate, png_path)
+
+    entry = {
+        "audio_filepath": str(wav_path),
+        "text": msg.upper(),
+        "text_len": len(msg),
+        "freq_hz": freq,
+        "wpm": wpm,
+        "amplitude": amp,
+    }
+    elapsed_ms = (time.perf_counter() - sample_start) * 1000
+    return idx, entry, elapsed_ms
 
 
 def main():
@@ -144,6 +216,12 @@ def main():
     parser.add_argument("--target-words-samples", type=int, default=0, help="Extra phrases built from random words (space-separated).")
     parser.add_argument("--target-words-min", type=int, default=2, help="Min words per synthetic phrase.")
     parser.add_argument("--target-words-max", type=int, default=5, help="Max words per synthetic phrase.")
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Workers for generation. 1=serial, -1=all CPU cores, N=>1 uses process pool.",
+    )
     args = parser.parse_args()
 
     # Optionally override defaults with a YAML config.
@@ -212,37 +290,57 @@ def main():
     total = args.num_samples if args.num_samples is not None else len(messages)
     selected = rng.choice(messages, size=total, replace=True) if total != len(messages) else messages
 
-    entries = []
     plot_dir = Path(args.plot_dir) if args.plot_dir else None
+    max_workers = args.num_workers
+    if max_workers == -1:
+        max_workers = os.cpu_count() or 1
+    if max_workers < 1:
+        max_workers = 1
+
+    base_seed = args.seed if args.seed is not None else int(time.time())
+
+    tasks = [
+        (
+            idx,
+            msg,
+            args.sample_rate,
+            args.wpm,
+            args.wpm_min,
+            args.wpm_max,
+            args.freq,
+            args.freq_min,
+            args.freq_max,
+            args.amp,
+            args.amp_min,
+            args.amp_max,
+            base_seed,
+            out_dir,
+            plot_dir,
+        )
+        for idx, msg in enumerate(selected)
+    ]
+
+    entries = [None] * len(tasks)
+    elapsed_list = []
     total_start = time.perf_counter()
-    for idx, msg in enumerate(selected):
-        sample_start = time.perf_counter()
-        wpm = args.wpm if args.wpm is not None else float(rng.uniform(args.wpm_min, args.wpm_max))
-        freq = args.freq if args.freq is not None else float(rng.uniform(args.freq_min, args.freq_max))
-        amp = args.amp if args.amp is not None else float(rng.uniform(args.amp_min, args.amp_max))
-        waveform = synthesize_morse(msg, sample_rate=args.sample_rate, wpm=wpm, freq=freq, amplitude=amp)
 
-        wav_path = out_dir / f"synthetic_{idx:05d}.wav"
-        sf.write(wav_path, waveform, args.sample_rate)
-
-        if plot_dir:
-            png_path = plot_dir / f"synthetic_{idx:05d}.png"
-            save_waveform_plot(waveform, args.sample_rate, png_path)
-
-        entries.append(
-            {
-                "audio_filepath": str(wav_path),
-                "text": msg.upper(),
-                "text_len": len(msg),
-                "freq_hz": freq,
-                "wpm": wpm,
-                "amplitude": amp,
-            }
-        )
-        sample_ms = (time.perf_counter() - sample_start) * 1000
-        print(
-            f"Wrote {wav_path} | msg='{msg}' | wpm={wpm:.2f} | freq={freq:.1f}Hz | amp={amp:.2f} | time={sample_ms:.1f}ms"
-        )
+    if max_workers == 1:
+        with tqdm(total=len(tasks), desc="generate", unit="sample") as pbar:
+            for t in tasks:
+                idx, entry, elapsed_ms = _generate_one(t)
+                entries[idx] = entry
+                elapsed_list.append(elapsed_ms)
+                pbar.update(1)
+    else:
+        with ProcessPoolExecutor(max_workers=max_workers) as ex, tqdm(
+            total=len(tasks), desc=f"generate[{max_workers}]", unit="sample"
+        ) as pbar:
+            futures = {ex.submit(_generate_one, t): t[0] for t in tasks}
+            for fut in as_completed(futures):
+                idx, entry, elapsed_ms = fut.result()
+                entries[idx] = entry
+                elapsed_list.append(elapsed_ms)
+                pbar.update(1)
 
     # Shuffle and split
     perm = rng.permutation(len(entries))
@@ -268,7 +366,7 @@ def main():
                 tfp.write(json.dumps(entry) + "\n")
 
     total_sec = time.perf_counter() - total_start
-    avg_ms = (total_sec / len(entries)) * 1000 if entries else 0
+    avg_ms = float(np.mean(elapsed_list)) if elapsed_list else 0.0
     print(f"Done. Train manifest: {train_manifest_path} ({len(train_entries)} entries)")
     if val_manifest_path:
         print(f"Val manifest: {val_manifest_path} ({len(val_entries)} entries)")
