@@ -108,6 +108,10 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```bash
   ./launch_run_multitask_counts.sh # or ./launch_run_multitask_counts.sh my_run_name
   ```
+- Transformer CTC prototype:
+  ```bash
+  ./launch_run_transformer.sh      # or ./launch_run_transformer.sh my_run_name
+  ```
 Both scripts regenerate data via `config/generation.yaml`, train with the chosen config, add predictions to train/val/test manifests, and run the R analysis. Outputs live under `outputs/<run-name>/`.
 
 ## Inference
@@ -153,8 +157,12 @@ Both scripts regenerate data via `config/generation.yaml`, train with the chosen
   - Character histogram head (bag-of-character counts excluding the blank token).
 - Use `config/prototype_multitask_counts.yaml` and the launcher `launch_run_multitask_counts.sh` to try it. The training loop adds auxiliary MSE losses on counts and per-character counts in addition to the CTC loss.
 
+### Transformer variant
+- `src/audio2morse/models/transformer_ctc.py` replaces the LSTM with a Transformer encoder (CNN front-end + positional encoding + TransformerEncoder).
+- Config: `config/transformer_small.yaml` and launcher `launch_run_transformer.sh`.
+
 ## Perspectives
-- Temporal context matters for Morse (dot/dash duration and gaps). We currently use LSTMs, but you could swap in:
+- Temporal context matters for Morse (dot/dash duration and gaps). Besides LSTMs, you can try:
   - Temporal CNN/TCN stacks to model short-range timing without recurrence.
   - Light transformers or conformers with limited attention span for local context.
 - Segmentation-aware training:
