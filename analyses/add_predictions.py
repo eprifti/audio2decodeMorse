@@ -29,6 +29,7 @@ from tqdm import tqdm
 from audio2morse.data.vocab import build_vocab, index_to_char
 from audio2morse.models.ctc_model import CTCMorseModel
 from audio2morse.models.multitask_ctc import MultiTaskCTCMorseModel
+from audio2morse.models.multitask_ctc_counts import MultiTaskCTCCountsModel
 
 
 def get_device() -> torch.device:
@@ -49,11 +50,33 @@ def load_checkpoint(path: Path):
     return ckpt["model_state"], ckpt.get("config"), ckpt.get("alphabet")
 
 
-def prepare_model(cfg: Dict, alphabet: str, device: torch.device):
+def infer_model_type(state_dict: Dict, cfg: Dict) -> str:
+    # Prefer explicit config
+    model_cfg = cfg.get("model", {}) if cfg else {}
+    if "type" in model_cfg:
+        return model_cfg["type"]
+    keys = state_dict.keys()
+    if any("count_head" in k for k in keys):
+        return "multitask_counts"
+    if any("bit_head" in k for k in keys) or any("gap_head" in k for k in keys):
+        return "multitask"
+    return "ctc"
+
+
+def prepare_model(cfg: Dict, alphabet: str, device: torch.device, model_type: str):
     label_map = build_vocab(alphabet)
-    model_type = cfg.get("model", {}).get("type", "ctc")
     if model_type == "multitask":
         model = MultiTaskCTCMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+    elif model_type == "multitask_counts":
+        model = MultiTaskCTCCountsModel(
             input_dim=cfg["data"]["n_mels"],
             vocab_size=len(label_map),
             cnn_channels=cfg["model"]["cnn_channels"],
@@ -168,7 +191,8 @@ def main():
     state_dict, ckpt_cfg, ckpt_alphabet = load_checkpoint(Path(args.checkpoint))
     cfg = ckpt_cfg if ckpt_cfg else load_config(Path(args.config))
     alphabet = ckpt_alphabet if ckpt_alphabet else cfg["labels"]["alphabet"]
-    model, label_map = prepare_model(cfg, alphabet, device)
+    model_type = infer_model_type(state_dict, cfg)
+    model, label_map = prepare_model(cfg, alphabet, device, model_type)
     model.load_state_dict(state_dict)
     model.eval()
 
