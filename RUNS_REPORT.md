@@ -12,6 +12,7 @@ Recent runs and their best validation metrics (lower is better for losses).
 | `transformer_tuned_ls_cos_v2` | Transformer tuned + broader data | 4.66 CTC loss | Uses widened generation ranges. |
 | `baseline_small_two_gpu_v2` | CNN2 + LSTM128 | ~4.67 CTC loss | Legacy small LSTM baseline. |
 | `bilstm_clean_gpu0_regen` | CNN3 + BiLSTM256 (CTC) | **1.20 CTC loss** | Best text-decoder to date; trained on regenerated data. |
+| `bilstm_clean_large_gpu0` | CNN3 + BiLSTM256 (CTC) | ~90 mean per-utt CTC loss (val) | Large dataset (50k); greedy decoding underperforms despite low training loss. |
 | `bilstm_counts_gpu0_regen` | CTC + count/hist heads | 82.6 combined loss | Count aux dominated; text quality degraded. |
 | `charcount_log_gpu0_regen` | Count-only (log target) | 0.078 val MSE (log-count) | Predicts only character counts; best checkpoint in `outputs/charcount_log_gpu0_regen/best.pt`. |
 

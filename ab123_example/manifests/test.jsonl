@@ -1,0 +1,10 @@
+{"audio_filepath": "ab123_example/audio/synthetic_00007.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 686.8205321855328, "wpm": 28.907560960254465, "amplitude": 0.29707970347125595}
+{"audio_filepath": "ab123_example/audio/synthetic_00003.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 580.6484894673935, "wpm": 24.242127428936982, "amplitude": 0.16366087395864276}
+{"audio_filepath": "ab123_example/audio/synthetic_00009.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 370.39956358511887, "wpm": 23.440592293067088, "amplitude": 0.4450806183285049}
+{"audio_filepath": "ab123_example/audio/synthetic_00006.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 710.6764516116616, "wpm": 23.682205859868073, "amplitude": 0.2641337240510985}
+{"audio_filepath": "ab123_example/audio/synthetic_00004.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 749.3539193651358, "wpm": 16.012762846773448, "amplitude": 0.43135751642921927}
+{"audio_filepath": "ab123_example/audio/synthetic_00001.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 553.8782392815026, "wpm": 17.832966894887864, "amplitude": 0.38947996772866167}
+{"audio_filepath": "ab123_example/audio/synthetic_00000.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 574.0570546233555, "wpm": 24.035337407211507, "amplitude": 0.18856967605992972}
+{"audio_filepath": "ab123_example/audio/synthetic_00008.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 475.4603723000464, "wpm": 22.676251180085906, "amplitude": 0.37220489717212846}
+{"audio_filepath": "ab123_example/audio/synthetic_00005.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 530.7846233212874, "wpm": 28.05013914481147, "amplitude": 0.36218188670521684}
+{"audio_filepath": "ab123_example/audio/synthetic_00002.wav", "text": "ALPHA BRAVO 123", "text_len": 15, "freq_hz": 466.64450621813, "wpm": 27.553701111412234, "amplitude": 0.4076347979221018}
