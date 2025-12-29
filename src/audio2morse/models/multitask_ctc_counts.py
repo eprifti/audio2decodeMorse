@@ -23,6 +23,7 @@ class MultiTaskCTCCountsModel(nn.Module):
         rnn_layers: int = 2,
         dropout: float = 0.1,
         bidirectional: bool = False,
+        use_mask_head: bool = False,
     ):
         super().__init__()
         convs = []
@@ -52,6 +53,9 @@ class MultiTaskCTCCountsModel(nn.Module):
         self.gap_head = nn.Linear(rnn_out_dim, 3)
         self.count_head = nn.Linear(rnn_out_dim, 1)  # predict total characters
         self.char_hist_head = nn.Linear(rnn_out_dim, vocab_size - 1)  # exclude blank
+        self.use_mask_head = use_mask_head
+        if self.use_mask_head:
+            self.mask_head = nn.Linear(rnn_out_dim, 1)  # framewise on/off logits
 
     def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> dict[str, torch.Tensor]:
         x = features.unsqueeze(1)  # (B,1,T,F)
@@ -76,7 +80,7 @@ class MultiTaskCTCCountsModel(nn.Module):
         count_pred = self.count_head(summary).squeeze(-1)  # (B,)
         hist_logits = self.char_hist_head(summary)  # (B, V-1)
 
-        return {
+        out = {
             "text_log_probs": text_log_probs,
             "bit_logits": bit_logits,
             "gap_logits": gap_logits,
@@ -84,3 +88,6 @@ class MultiTaskCTCCountsModel(nn.Module):
             "hist_logits": hist_logits,
             "out_lengths": out_lengths,
         }
+        if self.use_mask_head:
+            out["mask_logits"] = self.mask_head(enc).squeeze(-1)
+        return out

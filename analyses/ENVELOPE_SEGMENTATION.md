@@ -46,3 +46,14 @@ Using the command above on the synthetic set `ab123_example/` (10 variants of �
 - If spans are chopped too finely: increase `--smooth-ms` or lower `--threshold-ratio`.
 - If long gaps are not promoted to gap3/gap7: the off-run cutoffs are in `classify_runs` in `analyses/segment_envelope.py` (multipliers 1×/1.8×/3.5× of the median off length).
 - If dots/dashes are confused: adjust the `1.6` multiplier on the median on length (same file).
+
+## Self-supervised pretrain hook
+To inject the 1/3/7 prior into a DL model without full labels, use the helper:
+```bash
+PYTHONPATH=src .venv/bin/python analyses/train_self_supervised_envelope.py \
+  --train-manifest ab123_example/manifests/test.jsonl \
+  --val-manifest   ab123_example/manifests/test.jsonl \
+  --smooth-ms 10 --threshold-ratio 0.3 --mask-weight 0.5 \
+  --out-dir outputs/self_supervised_envelope_demo
+```
+It trains `MultiTaskCTCCountsModel` with an auxiliary mask head (on/off envelope) plus CTC on pseudo text (the manifest’s `text` can be produced by the envelope segmenter). The mask labels are recomputed on the fly from the envelope using the same smoothing/threshold parameters.
