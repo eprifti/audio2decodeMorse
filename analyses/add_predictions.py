@@ -16,18 +16,21 @@ Example:
 import argparse
 import json
 import time
+import math
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import pandas as pd
 import soundfile as sf
 import torch
 import torchaudio
 import yaml
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from audio2morse.data.dataset import MorseAudioDataset, collate_batch
 from audio2morse.data.vocab import build_vocab, index_to_char
-from audio2morse.models.ctc_model import CTCMorseModel
+from audio2morse.models.ctc_model import CTCMorseModel, CTCCountsMorseModel, CharCountModel
 from audio2morse.models.multitask_ctc import MultiTaskCTCMorseModel
 from audio2morse.models.multitask_ctc_counts import MultiTaskCTCCountsModel
 from audio2morse.models.transformer_ctc import TransformerCTCMorseModel
@@ -57,10 +60,10 @@ def infer_model_type(state_dict: Dict, cfg: Dict) -> str:
     if "type" in model_cfg:
         return model_cfg["type"]
     keys = state_dict.keys()
-    if any("count_head" in k for k in keys):
-        return "multitask_counts"
     if any("bit_head" in k for k in keys) or any("gap_head" in k for k in keys):
         return "multitask"
+    if any("count_head" in k for k in keys):
+        return "ctc_counts"
     if any("pos_enc" in k for k in keys) or any("encoder.layers" in k for k in keys):
         return "transformer"
     return "ctc"
@@ -98,6 +101,26 @@ def prepare_model(cfg: Dict, alphabet: str, device: torch.device, model_type: st
             num_layers=cfg["model"].get("num_layers", 4),
             dim_feedforward=cfg["model"].get("dim_feedforward", 512),
             dropout=cfg["model"].get("dropout", 0.1),
+            pre_subsample=cfg["model"].get("pre_subsample", False),
+        ).to(device)
+    elif model_type == "ctc_counts":
+        model = CTCCountsMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+    elif model_type == "count_only":
+        model = CharCountModel(
+            input_dim=cfg["data"]["n_mels"],
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
         ).to(device)
     else:
         model = CTCMorseModel(
@@ -199,6 +222,8 @@ def main():
     parser.add_argument("--out-parquet", default=None, help="Output Parquet path.")
     parser.add_argument("--out-csv", default=None, help="Output CSV path.")
     parser.add_argument("--per-char-out", default=None, help="Optional path to write per-character error stats CSV.")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for batched inference.")
+    parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers for batched inference.")
     args = parser.parse_args()
 
     device = get_device()
@@ -212,7 +237,9 @@ def main():
 
     blank_idx = label_map["<BLANK>"]
     idx_to_char = index_to_char(alphabet)
-    criterion = torch.nn.CTCLoss(blank=blank_idx, zero_infinity=True, reduction="none")
+    criterion = None
+    if model_type != "count_only":
+        criterion = torch.nn.CTCLoss(blank=blank_idx, zero_infinity=True, reduction="none")
 
     parts = {
         "train": Path(args.train),
@@ -228,50 +255,138 @@ def main():
         char_stats = {c: {"count": 0, "correct": 0, "subs": 0, "dels": 0} for c in alphabet}
 
     total_start = time.time()
+    def collate_entries(partition: str) -> Tuple[MorseAudioDataset, DataLoader]:
+        ds = MorseAudioDataset(
+            manifest_path=parts[partition],
+            sample_rate=cfg["data"]["sample_rate"],
+            n_mels=cfg["data"]["n_mels"],
+            frame_length_ms=cfg["data"]["frame_length_ms"],
+            frame_step_ms=cfg["data"]["frame_step_ms"],
+            label_map=label_map,
+            max_duration_s=cfg["data"].get("max_duration_s", None),
+            augment=None,
+        )
+        loader = DataLoader(
+            ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=collate_batch,
+            pin_memory=device.type == "cuda",
+        )
+        return ds, loader
+
+    def forward_batch(feats, feat_lens):
+        if isinstance(model, CharCountModel):
+            preds = model(feats.to(device))
+            return preds, None, None
+        if isinstance(model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel)):
+            out = model(feats.to(device), feat_lens.to(device))
+            log_probs = out["text_log_probs"]  # (B,T',V)
+            if log_probs.dim() == 3 and log_probs.shape[0] == feats.size(0):
+                log_probs = log_probs.permute(1, 0, 2)  # (T',B,V)
+            input_lengths = torch.div(feat_lens, model.downsample, rounding_mode="floor").to(device)
+            count_out = out.get("count_pred") if isinstance(out, dict) else None
+        elif isinstance(model, CTCCountsMorseModel):
+            out = model(feats.to(device))
+            log_probs = out["log_probs"]
+            count_out = out.get("count_pred") if isinstance(out, dict) else None
+            input_lengths = torch.div(feat_lens, model.downsample, rounding_mode="floor").to(device)
+        elif isinstance(model, TransformerCTCMorseModel):
+            log_probs = model(feats.to(device), feat_lens.to(device))  # (B,T',V)
+            log_probs = log_probs.permute(1, 0, 2)  # (T',B,V)
+            down = model.downsample_time if hasattr(model, "downsample_time") else model.downsample
+            input_lengths = torch.div(feat_lens, down, rounding_mode="floor").to(device)
+        else:
+            log_probs = model(feats.to(device))  # (T',B,V)
+            input_lengths = torch.div(feat_lens, 2 ** len(cfg["model"]["cnn_channels"]), rounding_mode="floor").to(device)
+            count_out = None
+        return log_probs, input_lengths, count_out
+
+    count_target = cfg.get("training", {}).get("count_target", "raw")
     with torch.no_grad():
-        for part, path in parts.items():
-            if not path.exists():
-                raise FileNotFoundError(f"Manifest not found: {path}")
-            with path.open("r") as fp:
-                lines = [ln for ln in fp if ln.strip()]
-            for line in tqdm(lines, desc=f"{part}", leave=False):
-                entry = json.loads(line)
-                audio_path = Path(entry["audio_filepath"])
-                text = entry["text"]
+        for part in ["train", "val", "test"]:
+            ds, loader = collate_entries(part)
+            for feats, feat_lens, targets, target_lens, utt_ids, texts in tqdm(loader, desc=f"{part}", leave=False):
+                outputs, input_lengths, count_out = forward_batch(feats, feat_lens)
+                if isinstance(model, CharCountModel):
+                    preds = outputs  # (B,)
+                    preds_raw = preds
+                    if count_target == "log":
+                        preds_raw = torch.expm1(preds)
+                    preds_raw = preds_raw.clamp(min=0).cpu()
+                    for b, (pred_raw, text, utt_id) in enumerate(zip(preds_raw.tolist(), texts, utt_ids)):
+                        true_count = len(text)
+                        mse = (pred_raw - true_count) ** 2
+                        row = {
+                            "audio_filepath": str(ds.samples[b].path),
+                            "text": text,
+                            "partition": part,
+                            "predicted_count": float(pred_raw),
+                            "true_count": true_count,
+                            "loss": float(mse),
+                            "inference_text": "",  # not produced by count-only
+                        }
+                        if ds.samples[b].freq_hz is not None:
+                            row["freq_hz"] = ds.samples[b].freq_hz
+                        if ds.samples[b].wpm is not None:
+                            row["wpm"] = ds.samples[b].wpm
+                        if ds.samples[b].amplitude is not None:
+                            row["amplitude"] = ds.samples[b].amplitude
+                        row["utt_id"] = utt_id
+                        rows.append(row)
+                    continue
 
-                mel = load_audio(audio_path, cfg).unsqueeze(0).to(device)  # (1,T,F)
-                if isinstance(model, MultiTaskCTCMorseModel):
-                    out = model(mel, torch.tensor([mel.shape[1]], device=device))
-                    log_probs = out["text_log_probs"]  # (B,T',V)
-                    if log_probs.shape[0] == 1:
-                        log_probs = log_probs.permute(1, 0, 2)  # (T',1,V)
-                    input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
-                else:
-                    log_probs = model(mel)  # (T',B,V)
-                    input_lengths = torch.tensor([log_probs.shape[0]], dtype=torch.long, device=device)
-                targets = text_to_targets(text, label_map, blank_idx).to(device)
-                target_lengths = torch.tensor([targets.numel()], dtype=torch.long, device=device)
+                log_probs = outputs
+                losses = criterion(log_probs, targets.to(device), input_lengths, target_lens.to(device))
+                count_preds = None
+                if isinstance(model, CTCCountsMorseModel):
+                    count_preds = count_out
+                hyps = []
+                if log_probs.shape[1] != len(texts):
+                    log_probs = log_probs.permute(1, 0, 2)  # (B,T',V) to align with texts
+                for b in range(len(texts)):
+                    lp = log_probs[:, b : b + 1, :]  # (T',1,V)
+                    hyps.append(greedy_decode(lp, idx_to_char))
 
-                loss_val = criterion(log_probs, targets, input_lengths, target_lengths)[0].item()
-                hyp = greedy_decode(log_probs, idx_to_char)
+                count_preds_list = count_preds.cpu().tolist() if count_preds is not None else [None] * len(texts)
 
-                if do_char_stats and char_stats is not None:
-                    for op, r, _ in levenshtein_ops(text, hyp):
-                        if r not in char_stats:
-                            continue
-                        char_stats[r]["count"] += 1
-                        if op == "match":
-                            char_stats[r]["correct"] += 1
-                        elif op == "sub":
-                            char_stats[r]["subs"] += 1
-                        elif op == "del":
-                            char_stats[r]["dels"] += 1
+                for text, hyp, loss_val, utt_id, count_pred in zip(texts, hyps, losses.cpu().tolist(), utt_ids, count_preds_list):
+                    if do_char_stats and char_stats is not None:
+                        for op, r, _ in levenshtein_ops(text, hyp):
+                            if r not in char_stats:
+                                continue
+                            char_stats[r]["count"] += 1
+                            if op == "match":
+                                char_stats[r]["correct"] += 1
+                            elif op == "sub":
+                                char_stats[r]["subs"] += 1
+                            elif op == "del":
+                                char_stats[r]["dels"] += 1
 
-                row = dict(entry)
-                row["partition"] = part
-                row["inference_text"] = hyp
-                row["loss"] = loss_val
-                rows.append(row)
+                    row = {
+                        "audio_filepath": str(ds.samples[b].path),
+                        "text": text,
+                        "partition": part,
+                        "inference_text": hyp,
+                        "loss": float(loss_val),
+                    }
+                    # Add metadata if present
+                    if ds.samples[b].freq_hz is not None:
+                        row["freq_hz"] = ds.samples[b].freq_hz
+                    if ds.samples[b].wpm is not None:
+                        row["wpm"] = ds.samples[b].wpm
+                    if ds.samples[b].amplitude is not None:
+                        row["amplitude"] = ds.samples[b].amplitude
+                    row["utt_id"] = utt_id
+                    if count_pred is not None:
+                        raw_count = count_pred
+                        if count_target == "log":
+                            raw_count = max(0.0, math.exp(count_pred) - 1.0)
+                        row["predicted_count"] = float(raw_count)
+                        row["true_count"] = len(text)
+                        row["count_abs_error"] = abs(raw_count - len(text))
+                    rows.append(row)
 
     df = pd.DataFrame(rows)
     if args.run_dir:

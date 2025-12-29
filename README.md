@@ -100,6 +100,20 @@ Deep learning scaffold for decoding audible Morse code into text on macOS with G
   ```bash
   ./launch_run_bilstm_clean.sh     # or ./launch_run_bilstm_clean.sh my_run_name
   ```
+- Count-only character estimator (predicts sequence length, no decoding):
+  ```bash
+  PYTHONPATH=src python3 -m audio2morse.training.train \
+    --config config/baseline_charcount.yaml \
+    --run-name charcount_log_gpu0
+  # Add predicted counts into manifests
+  PYTHONPATH=src python3 analyses/add_predictions.py \
+    --checkpoint outputs/charcount_log_gpu0/best.pt \
+    --config config/baseline_charcount.yaml \
+    --train data/datasets/simple_baseline/manifests/train.jsonl \
+    --val   data/datasets/simple_baseline/manifests/val.jsonl \
+    --test  data/datasets/simple_baseline/manifests/test.jsonl \
+    --run-dir outputs/charcount_log_gpu0
+  ```
 - Multi-task prototype (CTC + bit/gap heads):
   ```bash
   ./launch_run_multitask.sh        # or ./launch_run_multitask.sh my_run_name
@@ -137,6 +151,7 @@ Both scripts regenerate data via `config/generation.yaml`, train with the chosen
 - `src/audio2morse/training/` – training loop entrypoint.
 - `src/audio2morse/inference/` – inference helpers and CLI.
 - `src/audio2morse/data/morse_map.py` – international Morse code dot/dash lookup tables.
+- `RUNS_REPORT.md` – quick summary of recent experiment results and best checkpoints.
 
 ## Model architecture
 - Front-end: log-mel spectrograms (64 bins by default) with frame length/step 25/10 ms, mono audio resampled to 16 kHz.
@@ -179,6 +194,36 @@ Both scripts regenerate data via `config/generation.yaml`, train with the chosen
   Rscript analyses/analyze_preds.R --run-dir outputs/<run-name>
   ```
   The script installs required R packages if missing and writes plots plus `linear_model_summary.txt` to `outputs/<run-name>/`.
+- For count-only models, a quick summary of count accuracy (MAE/RMSE):
+  ```bash
+  PYTHONPATH=src python3 analyses/summarize_counts.py \
+    --input outputs/charcount_log_gpu0/combined_with_preds.csv
+  ```
+- Envelope-only count baseline (1D CNN on smoothed amplitude):
+  ```bash
+  PYTHONPATH=src .venv/bin/python analyses/train_envelope_count.py \
+    --train data/datasets/simple_baseline/manifests/train.jsonl \
+    --val   data/datasets/simple_baseline/manifests/val.jsonl \
+    --epochs 6 --batch-size 64 --envelope-hz 400 \
+    --out-dir outputs/envelope_count_baseline
+  ```
+- CTC with auxiliary count head (log-target counts):
+  ```bash
+  PYTHONPATH=src .venv/bin/python -m audio2morse.training.train \
+    --config config/baseline_cnn3_bilstm256_counts_log.yaml \
+    --run-name ctc_counts_log_try
+  # Evaluate text + counts
+  PYTHONPATH=src .venv/bin/python analyses/add_predictions.py \
+    --checkpoint outputs/ctc_counts_log_try/best.pt \
+    --config config/baseline_cnn3_bilstm256_counts_log.yaml \
+    --train data/datasets/simple_baseline/manifests/train.jsonl \
+    --val   data/datasets/simple_baseline/manifests/val.jsonl \
+    --test  data/datasets/simple_baseline/manifests/test.jsonl \
+    --run-dir outputs/ctc_counts_log_try
+  # Summarize count MAE/RMSE
+  PYTHONPATH=src .venv/bin/python analyses/summarize_counts.py \
+    --input outputs/ctc_counts_log_try/combined_with_preds.csv
+  ```
 
 ## License
 This project is licensed under the MIT License (see `LICENSE`).

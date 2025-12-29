@@ -12,8 +12,8 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 
 RUN_NAME="${1:-baseline_cnn3_bilstm256_clean_$(date +%Y%m%d_%H%M%S)}"
-GEN_CFG="config/generation.yaml"
-TRAIN_CFG="config/baseline_cnn3_bilstm256_clean.yaml"
+GEN_CFG="${GEN_CFG:-config/generation.yaml}"
+TRAIN_CFG="${TRAIN_CFG:-config/baseline_cnn3_bilstm256_clean.yaml}"
 RUN_DIR="outputs/${RUN_NAME}"
 
 echo "==> Generating dataset via ${GEN_CFG}"

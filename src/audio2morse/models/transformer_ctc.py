@@ -59,17 +59,27 @@ class TransformerCTCMorseModel(nn.Module):
         num_layers: int = 4,
         dim_feedforward: int = 512,
         dropout: float = 0.1,
+        pre_subsample: bool = False,
     ):
         super().__init__()
+        self.pre_subsample = pre_subsample
+        if pre_subsample:
+            # Optional stride-2 conv to shorten time dimension before main stack.
+            self.subsample = nn.Conv2d(1, 16, kernel_size=(3, 3), stride=(2, 1), padding=1)
+            in_ch = 16
+        else:
+            self.subsample = None
+            in_ch = 1
         convs = []
-        in_ch = 1
         for ch in cnn_channels:
             convs.append(ConvBlock(in_ch, ch, pool=(2, 2)))
             in_ch = ch
         self.convs = nn.Sequential(*convs)
 
-        self.downsample = 2 ** len(cnn_channels)
-        proj_dim = (input_dim // self.downsample) * cnn_channels[-1]
+        self.downsample_time = (2 if pre_subsample else 1) * (2 ** len(cnn_channels))
+        self.downsample_freq = 2 ** len(cnn_channels)
+        self.downsample = self.downsample_time  # backward-compatible alias
+        proj_dim = (input_dim // self.downsample_freq) * cnn_channels[-1]
         self.input_proj = nn.Linear(proj_dim, d_model)
         self.pos_enc = PositionalEncoding(d_model, dropout=dropout)
 
@@ -89,16 +99,18 @@ class TransformerCTCMorseModel(nn.Module):
             features: (B, T, F)
             lengths:  (B,)
         Returns:
-            Log-probs (T', B, V) for CTC
+            Log-probs (B, T', V) for CTC (batch-first)
         """
         x = features.unsqueeze(1)  # (B,1,T,F)
+        if self.subsample is not None:
+            x = self.subsample(x)  # (B,16,T/2,F')
         x = self.convs(x)  # (B,C,T',F')
         b, c, t, f = x.shape
         x = x.permute(0, 2, 1, 3).contiguous().view(b, t, c * f)  # (B,T',C*F')
         x = self.input_proj(x)  # (B,T',d_model)
 
         # Lengths after downsample
-        out_lengths = torch.div(lengths, self.downsample, rounding_mode="floor")
+        out_lengths = torch.div(lengths, self.downsample_time, rounding_mode="floor")
 
         # Transformer expects (T,B,E)
         x = x.transpose(0, 1)  # (T',B,d_model)
@@ -110,5 +122,5 @@ class TransformerCTCMorseModel(nn.Module):
         x = self.encoder(x, src_key_padding_mask=pad_mask)
 
         logits = self.classifier(x)  # (T',B,V)
-        log_probs = F.log_softmax(logits, dim=-1)
+        log_probs = F.log_softmax(logits, dim=-1).transpose(0, 1)  # (B,T',V)
         return log_probs

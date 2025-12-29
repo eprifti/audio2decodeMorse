@@ -1,0 +1,44 @@
+data:
+  train_manifest: data/datasets/simple_baseline/manifests/train.jsonl
+  val_manifest: data/datasets/simple_baseline/manifests/val.jsonl
+  sample_rate: 16000
+  n_mels: 64
+  frame_length_ms: 25
+  frame_step_ms: 10
+  max_duration_s: 12
+  augment:
+    specaugment:
+      enabled: false
+      freq_mask_param: 8
+      time_mask_param: 30
+      num_masks: 2
+    waveform:
+      enabled: false
+      gain_min: 0.9
+      gain_max: 1.1
+      noise_std: 0.005
+
+labels:
+  alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,?'!/()&:;=+-_\"$@ "
+
+model:
+  type: count_only
+  cnn_channels: [32, 64, 128]
+  rnn_hidden_size: 256
+  rnn_layers: 2
+  dropout: 0.2
+  bidirectional: true
+
+training:
+  batch_size: 16
+  num_workers: 8
+  epochs: 12
+  learning_rate: 0.0008
+  weight_decay: 0.0
+  grad_clip: 5.0
+  log_interval: 20
+  checkpoint_dir: outputs
+  seed: 42
+  early_stop_patience: 3
+  lr_scheduler: null
+  count_target: log

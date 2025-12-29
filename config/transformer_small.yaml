@@ -8,15 +8,15 @@ data:
   max_duration_s: 12
   augment:
     specaugment:
-      enabled: false
-      freq_mask_param: 8
-      time_mask_param: 30
-      num_masks: 2
+      enabled: true
+      freq_mask_param: 16
+      time_mask_param: 60
+      num_masks: 4
     waveform:
-      enabled: false
+      enabled: true
       gain_min: 0.9
       gain_max: 1.1
-      noise_std: 0.005
+      noise_std: 0.02
 
 labels:
   alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,?'!/()&:;=+-_\"$@ "
@@ -27,18 +27,23 @@ model:
   d_model: 256
   nhead: 4
   num_layers: 4
-  dim_feedforward: 512
-  dropout: 0.1
+  dim_feedforward: 2048
+  dropout: 0.3
+  pre_subsample: true
 
 training:
-  batch_size: 8
+  batch_size: 16
   num_workers: 4
-  epochs: 12
-  learning_rate: 0.001
-  weight_decay: 0.0
+  epochs: 24
+  learning_rate: 0.0002
+  weight_decay: 0.02
+  grad_accum_steps: 2
+  label_smoothing: 0.05
   grad_clip: 5.0
   log_interval: 20
   checkpoint_dir: outputs
   seed: 42
-  early_stop_patience: null
-  lr_scheduler: null
+  early_stop_patience: 3
+  lr_scheduler:
+    type: warmup_cosine
+    warmup_epochs: 3

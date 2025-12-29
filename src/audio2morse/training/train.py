@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
@@ -18,7 +19,7 @@ import matplotlib.pyplot as plt
 
 from audio2morse.data.dataset import MorseAudioDataset, collate_batch
 from audio2morse.data.vocab import build_vocab
-from audio2morse.models.ctc_model import CTCMorseModel
+from audio2morse.models.ctc_model import CTCMorseModel, CTCCountsMorseModel, CharCountModel
 from audio2morse.models.multitask_ctc import MultiTaskCTCMorseModel
 from audio2morse.models.multitask_ctc_counts import MultiTaskCTCCountsModel
 from audio2morse.models.transformer_ctc import TransformerCTCMorseModel
@@ -57,65 +58,117 @@ def set_seed(seed: int) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
 
 
-def train_epoch(model, loader, criterion, optimizer, device, downsample_factor, label_map=None, aux_weights=None):
+def apply_label_smoothing(log_probs: torch.Tensor, epsilon: float, vocab_size: int) -> torch.Tensor:
+    """Mix logits with uniform distribution for CTC label smoothing."""
+    if epsilon <= 0:
+        return log_probs
+    probs = log_probs.exp()
+    smoothed = (1 - epsilon) * probs + epsilon / vocab_size
+    return torch.log(smoothed.clamp(min=1e-8))
+
+
+def train_epoch(model, loader, criterion, optimizer, device, downsample_factor, label_map=None, aux_weights=None, label_smoothing: float = 0.0, grad_accum_steps: int = 1, count_target: str = "raw"):
     model.train()
     total_loss = 0.0
-    is_multitask = isinstance(model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel))
-    is_counts = isinstance(model, MultiTaskCTCCountsModel)
+    base_model = model.module if isinstance(model, nn.DataParallel) else model
+    is_multitask = isinstance(base_model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel))
+    is_counts = isinstance(base_model, (MultiTaskCTCCountsModel, CTCCountsMorseModel))
+    is_count_only = isinstance(base_model, CharCountModel)
+    is_transformer = isinstance(base_model, TransformerCTCMorseModel)
     aux_w = aux_weights or {}
     blank_idx = label_map["<BLANK>"] if label_map else None
+    accum_counter = 0
+    optimizer.zero_grad()
     for feats, feat_lens, targets, target_lens, _, texts in tqdm(loader, desc="train", leave=False):
         feats = feats.to(device)
         targets = targets.to(device)
-
-        optimizer.zero_grad()
-        if is_multitask:
+        if is_count_only:
+            counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
+            if count_target == "log":
+                counts = torch.log1p(counts)
+            preds = model(feats)
+            loss = F.mse_loss(preds, counts)
+        elif is_multitask:
             out = model(feats, feat_lens.to(device))
             log_probs = out["text_log_probs"]  # (B, T', V)
+        elif is_transformer:
+            out = model(feats, feat_lens.to(device))
+            log_probs = out  # (T', B, V)
         else:
             out = model(feats)
-            log_probs = out  # (T', B, V) from CTCMorseModel
-        if log_probs.dim() == 3 and log_probs.shape[0] == feats.size(0):
-            log_probs = log_probs.permute(1, 0, 2)  # ensure (T, B, V) for CTC
-        out_lens = downsample_lengths(feat_lens.to(device), downsample_factor)
-        flat_targets = torch.cat([targets[i, :target_lens[i]] for i in range(targets.size(0))]).to(device)
-        loss = criterion(log_probs, flat_targets, out_lens, target_lens.to(device))
-        if is_counts and label_map:
-            counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
-            count_loss = F.mse_loss(out["count_pred"], counts)
-            vocab_no_blank = len(label_map) - 1
-            hist_targets = torch.zeros((len(texts), vocab_no_blank), device=device)
-            for i, t in enumerate(texts):
-                for ch in t:
-                    if ch not in label_map or label_map[ch] == blank_idx:
-                        continue
-                    hist_targets[i, label_map[ch]] += 1.0
-            hist_loss = F.mse_loss(out["hist_logits"], hist_targets)
-            loss = loss + aux_w.get("count", 0.1) * count_loss + aux_w.get("hist", 0.1) * hist_loss
+            if isinstance(out, dict) and "log_probs" in out:
+                log_probs = out["log_probs"]
+            else:
+                log_probs = out  # (T', B, V) from CTCMorseModel
+        if not is_count_only:
+            log_probs = apply_label_smoothing(log_probs, label_smoothing, log_probs.shape[-1])
+            if log_probs.dim() == 3 and log_probs.shape[0] == feats.size(0):
+                log_probs = log_probs.permute(1, 0, 2)  # ensure (T, B, V) for CTC
+            out_lens = downsample_lengths(feat_lens.to(device), downsample_factor)
+            flat_targets = torch.cat([targets[i, :target_lens[i]] for i in range(targets.size(0))]).to(device)
+            loss = criterion(log_probs, flat_targets, out_lens, target_lens.to(device))
+            if is_counts and label_map:
+                counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
+                if count_target == "log":
+                    counts = torch.log1p(counts)
+                count_loss = F.mse_loss(out["count_pred"], counts)
+                loss = loss + aux_w.get("count", 0.1) * count_loss
+                if isinstance(out, dict) and "hist_logits" in out:
+                    vocab_no_blank = len(label_map) - 1
+                    hist_targets = torch.zeros((len(texts), vocab_no_blank), device=device)
+                    for i, t in enumerate(texts):
+                        for ch in t:
+                            if ch not in label_map or label_map[ch] == blank_idx:
+                                continue
+                            hist_targets[i, label_map[ch]] += 1.0
+                    hist_loss = F.mse_loss(out["hist_logits"], hist_targets)
+                    loss = loss + aux_w.get("hist", 0.1) * hist_loss
+        loss = loss / grad_accum_steps
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-        optimizer.step()
-        total_loss += loss.item()
+        accum_counter += 1
+        if accum_counter % grad_accum_steps == 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            optimizer.step()
+            optimizer.zero_grad()
+        total_loss += loss.item() * grad_accum_steps
     return total_loss / max(len(loader), 1)
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device, downsample_factor, label_map=None, aux_weights=None):
+def validate(model, loader, criterion, device, downsample_factor, label_map=None, aux_weights=None, label_smoothing: float = 0.0, count_target: str = "raw"):
     model.eval()
     total_loss = 0.0
-    is_multitask = isinstance(model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel))
-    is_counts = isinstance(model, MultiTaskCTCCountsModel)
+    base_model = model.module if isinstance(model, nn.DataParallel) else model
+    is_multitask = isinstance(base_model, (MultiTaskCTCMorseModel, MultiTaskCTCCountsModel))
+    is_counts = isinstance(base_model, (MultiTaskCTCCountsModel, CTCCountsMorseModel))
+    is_count_only = isinstance(base_model, CharCountModel)
+    is_transformer = isinstance(base_model, TransformerCTCMorseModel)
     aux_w = aux_weights or {}
     blank_idx = label_map["<BLANK>"] if label_map else None
     for feats, feat_lens, targets, target_lens, _, texts in loader:
         feats = feats.to(device)
         targets = targets.to(device)
+        if is_count_only:
+            counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
+            if count_target == "log":
+                counts = torch.log1p(counts)
+            preds = model(feats)
+            loss = F.mse_loss(preds, counts)
+            total_loss += loss.item()
+            continue
         if is_multitask:
             out = model(feats, feat_lens.to(device))
             log_probs = out["text_log_probs"]  # (B, T', V)
+        elif is_transformer:
+            out = model(feats, feat_lens.to(device))
+            log_probs = out  # (T', B, V)
         else:
             out = model(feats)
-            log_probs = out  # (T', B, V) from CTCMorseModel
+            if isinstance(out, dict) and "log_probs" in out:
+                log_probs = out["log_probs"]
+            else:
+                log_probs = out  # (T', B, V) from CTCMorseModel
+        log_probs = apply_label_smoothing(log_probs, label_smoothing, log_probs.shape[-1])
         if log_probs.dim() == 3 and log_probs.shape[0] == feats.size(0):
             log_probs = log_probs.permute(1, 0, 2)  # ensure (T, B, V) for CTC
         out_lens = downsample_lengths(feat_lens.to(device), downsample_factor)
@@ -123,16 +176,20 @@ def validate(model, loader, criterion, device, downsample_factor, label_map=None
         loss = criterion(log_probs, flat_targets, out_lens, target_lens.to(device))
         if is_counts and label_map:
             counts = torch.tensor([len(t) for t in texts], dtype=torch.float32, device=device)
+            if count_target == "log":
+                counts = torch.log1p(counts)
             count_loss = F.mse_loss(out["count_pred"], counts)
-            vocab_no_blank = len(label_map) - 1
-            hist_targets = torch.zeros((len(texts), vocab_no_blank), device=device)
-            for i, t in enumerate(texts):
-                for ch in t:
-                    if ch not in label_map or label_map[ch] == blank_idx:
-                        continue
-                    hist_targets[i, label_map[ch]] += 1.0
-            hist_loss = F.mse_loss(out["hist_logits"], hist_targets)
-            loss = loss + aux_w.get("count", 0.1) * count_loss + aux_w.get("hist", 0.1) * hist_loss
+            loss = loss + aux_w.get("count", 0.1) * count_loss
+            if isinstance(out, dict) and "hist_logits" in out:
+                vocab_no_blank = len(label_map) - 1
+                hist_targets = torch.zeros((len(texts), vocab_no_blank), device=device)
+                for i, t in enumerate(texts):
+                    for ch in t:
+                        if ch not in label_map or label_map[ch] == blank_idx:
+                            continue
+                        hist_targets[i, label_map[ch]] += 1.0
+                hist_loss = F.mse_loss(out["hist_logits"], hist_targets)
+                loss = loss + aux_w.get("hist", 0.1) * hist_loss
         total_loss += loss.item()
     return total_loss / max(len(loader), 1)
 
@@ -199,6 +256,7 @@ def main():
     )
 
     model_type = cfg["model"].get("type", "ctc")
+    dp_ok = model_type in ("multitask", "multitask_counts", "transformer")
     if model_type == "multitask":
         model = MultiTaskCTCMorseModel(
             input_dim=cfg["data"]["n_mels"],
@@ -231,8 +289,30 @@ def main():
             num_layers=cfg["model"].get("num_layers", 4),
             dim_feedforward=cfg["model"].get("dim_feedforward", 512),
             dropout=cfg["model"].get("dropout", 0.1),
+            pre_subsample=cfg["model"].get("pre_subsample", False),
+        ).to(device)
+        downsample_factor = model.downsample_time
+    elif model_type == "ctc_counts":
+        model = CTCCountsMorseModel(
+            input_dim=cfg["data"]["n_mels"],
+            vocab_size=len(label_map),
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
         ).to(device)
         downsample_factor = model.downsample
+    elif model_type == "count_only":
+        model = CharCountModel(
+            input_dim=cfg["data"]["n_mels"],
+            cnn_channels=cfg["model"]["cnn_channels"],
+            rnn_hidden_size=cfg["model"]["rnn_hidden_size"],
+            rnn_layers=cfg["model"]["rnn_layers"],
+            dropout=cfg["model"]["dropout"],
+            bidirectional=cfg["model"].get("bidirectional", False),
+        ).to(device)
+        downsample_factor = 2 ** len(cfg["model"]["cnn_channels"])
     else:
         model = CTCMorseModel(
             input_dim=cfg["data"]["n_mels"],
@@ -245,7 +325,12 @@ def main():
         ).to(device)
         downsample_factor = 2 ** len(cfg["model"]["cnn_channels"])  # fixed 2x2 pooling
 
-    criterion = nn.CTCLoss(blank=blank_idx, zero_infinity=True)
+    use_data_parallel = dp_ok and device.type == "cuda" and torch.cuda.device_count() > 1
+    if use_data_parallel:
+        print(f"Using DataParallel on {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
+
+    criterion = nn.CTCLoss(blank=blank_idx, zero_infinity=True) if model_type != "count_only" else nn.MSELoss()
     optimizer = optim.Adam(
         model.parameters(),
         lr=cfg["training"]["learning_rate"],
@@ -253,6 +338,8 @@ def main():
     )
     sched_cfg = cfg["training"].get("lr_scheduler")
     scheduler = None
+    total_steps = cfg["training"]["epochs"]
+    warmup_steps = sched_cfg.get("warmup_epochs", 0) if sched_cfg else 0
     if sched_cfg and sched_cfg.get("type") == "reduce_on_plateau":
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -261,6 +348,13 @@ def main():
             patience=sched_cfg.get("patience", 2),
             min_lr=sched_cfg.get("min_lr", 1e-5),
         )
+    elif sched_cfg and sched_cfg.get("type") == "warmup_cosine":
+        def lr_lambda(step: int):
+            if step < warmup_steps:
+                return max(1e-8, float(step + 1) / float(max(1, warmup_steps)))
+            progress = (step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
     run_name = args.run_name or datetime.now().strftime("run-%Y%m%d-%H%M%S")
     checkpoint_root = Path(cfg["training"]["checkpoint_dir"]) / run_name
@@ -270,13 +364,14 @@ def main():
     best_val = float("inf")
     epoch_history = []
     start_epoch = 1
-    patience = None  # early stopping disabled
+    patience = cfg["training"].get("early_stop_patience")
     patience_counter = 0
 
     if args.resume:
         ckpt_path = Path(args.resume)
         ckpt = torch.load(ckpt_path, map_location=device)
-        model.load_state_dict(ckpt["model_state"])
+        target_model = model.module if isinstance(model, nn.DataParallel) else model
+        target_model.load_state_dict(ckpt["model_state"])
         print(f"Resumed model weights from {ckpt_path}")
         # Try to infer starting epoch from filename like epoch_5.pt
         name = ckpt_path.stem
@@ -289,6 +384,9 @@ def main():
             start_epoch = 1
         print(f"Starting from epoch {start_epoch}")
 
+    label_smoothing = float(cfg["training"].get("label_smoothing", 0.0))
+    grad_accum_steps = max(1, int(cfg["training"].get("grad_accum_steps", 1)))
+    count_target = cfg["training"].get("count_target", "raw")
     for epoch in range(start_epoch, cfg["training"]["epochs"] + 1):
         train_loss = train_epoch(
             model,
@@ -299,6 +397,9 @@ def main():
             downsample_factor,
             label_map=label_map,
             aux_weights=cfg["training"].get("aux_weights"),
+            label_smoothing=label_smoothing,
+            grad_accum_steps=grad_accum_steps,
+            count_target=count_target,
         )
         val_loss = validate(
             model,
@@ -308,16 +409,21 @@ def main():
             downsample_factor,
             label_map=label_map,
             aux_weights=cfg["training"].get("aux_weights"),
+            label_smoothing=label_smoothing,
+            count_target=count_target,
         )
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
-        if scheduler:
+        if scheduler and isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
             scheduler.step(val_loss)
+        elif scheduler:
+            scheduler.step()
         epoch_history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
         ckpt_path = checkpoint_root / f"epoch_{epoch}.pt"
+        model_to_save = model.module if isinstance(model, nn.DataParallel) else model
         torch.save(
             {
-                "model_state": model.state_dict(),
+                "model_state": model_to_save.state_dict(),
                 "config": cfg,
                 "alphabet": alphabet,
             },
@@ -328,7 +434,7 @@ def main():
             best_path = checkpoint_root / "best.pt"
             torch.save(
                 {
-                    "model_state": model.state_dict(),
+                    "model_state": model_to_save.state_dict(),
                     "config": cfg,
                     "alphabet": alphabet,
                 },
@@ -338,6 +444,9 @@ def main():
             patience_counter = 0
         else:
             patience_counter += 1
+            if patience is not None and patience_counter >= patience:
+                print(f"Early stopping triggered after {patience_counter} epochs without improvement.")
+                break
 
         # Write/append loss history in real time
         metrics_path = checkpoint_root / "loss_history.csv"

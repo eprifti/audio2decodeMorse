@@ -1,0 +1,26 @@
+input: data/texts.txt
+out_dir: data/datasets/large_baseline/audio
+manifest: data/datasets/large_baseline/manifests/train.jsonl
+test_manifest: data/datasets/large_baseline/manifests/test.jsonl
+val_manifest: data/datasets/large_baseline/manifests/val.jsonl
+train_ratio: 0.8
+val_ratio: 0.1
+sample_rate: 16000
+num_samples: 50000
+wpm_min: 15
+wpm_max: 30
+freq_min: 350
+freq_max: 1000
+amp_min: 0.15
+amp_max: 0.45
+target_chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,?'!/()&:;=+-_\"$@ "
+target_samples: 10000
+target_min_len: 3
+target_max_len: 14
+target_words_file: data/texts.txt
+target_words_samples: 7500
+target_words_min: 2
+target_words_max: 6
+plot_dir: data/datasets/large_baseline/waveforms
+seed: 42
+num_workers: -1
