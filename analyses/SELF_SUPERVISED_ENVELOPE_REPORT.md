@@ -41,7 +41,17 @@ This note summarizes the envelope-based self-supervision experiments, mask sweep
   ```
   Result: train_loss=0.0955, val_loss=0.0941.
 
-- Eval of the fine-tuned model (greedy, refs filtered to A–Z0–9 space):
+- Eval of the self-supervised model (greedy, 1k-sample subset):
+  ```
+  PYTHONPATH=src .venv/bin/python analyses/eval_self_supervised_envelope.py \
+    --checkpoint outputs/self_supervised_envelope_large/best.pt \
+    --manifest data/datasets/large_baseline/manifests/val.jsonl \
+    --batch-size 64 --beam-size 1 --device cuda \
+    --max-samples 1000 --print-samples 3
+  ```
+  CER ≈ 0.7185, exact ≈ 33.2%. Outputs `combined_with_preds.csv` and `loss_trace.csv` in the checkpoint dir.
+
+- Eval of the fine-tuned model (greedy, refs filtered to A–Z0–9 space, 1k samples):
   ```
   PYTHONPATH=src .venv/bin/python analyses/eval_self_supervised_envelope.py \
     --checkpoint outputs/finetune_supervised_from_envelope/best.pt \

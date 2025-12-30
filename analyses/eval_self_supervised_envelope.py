@@ -137,6 +137,7 @@ def main():
     )
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
+    results = []
     total_cer = 0.0
     total_chars = 0
     exact = 0
@@ -163,6 +164,7 @@ def main():
             total_chars += len(ref)
             exact += int(ref == hyp)
             count += 1
+            results.append({"utt_id": utt_ids[b], "ref": ref, "hyp": hyp})
             if len(sample_rows) < args.print_samples:
                 sample_rows.append((utt_ids[b], ref, hyp))
         if args.max_samples is not None and count >= args.max_samples:
@@ -174,6 +176,16 @@ def main():
         print("\nSamples (ref | hyp):")
         for uid, ref, hyp in sample_rows:
             print(f"{uid}: {ref} | {hyp}")
+
+    # write combined preds CSV
+    import csv
+
+    out_csv = args.checkpoint.parent / "combined_with_preds.csv"
+    with out_csv.open("w", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=["utt_id", "ref", "hyp"])
+        writer.writeheader()
+        writer.writerows(results)
+    print(f"Wrote predictions to {out_csv}")
 
 
 if __name__ == "__main__":

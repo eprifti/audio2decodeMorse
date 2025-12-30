@@ -265,6 +265,7 @@ def main():
     args.out_dir = Path(args.out_dir)
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
+    history = []
     best_val = 1e9
     for epoch in range(1, args.epochs + 1):
         train_loss = train_loop(model, train_loader, optimizer, device, label_map, args.mask_weight)
@@ -280,6 +281,16 @@ def main():
         if val_loss < best_val:
             best_val = val_loss
             torch.save(ckpt, args.out_dir / "best.pt")
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
+
+    # write loss trace
+    import csv
+
+    loss_path = args.out_dir / "loss_trace.csv"
+    with loss_path.open("w", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=["epoch", "train_loss", "val_loss"])
+        writer.writeheader()
+        writer.writerows(history)
 
 
 if __name__ == "__main__":
